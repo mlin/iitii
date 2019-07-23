@@ -30,3 +30,14 @@
 *.exe
 *.out
 *.app
+.vscode
+
+# CMake
+CMakeCache.txt
+CMakeFiles
+test/Testing
+test/*.cmake
+test/DartConfiguration.tcl
+test/external
+test/Makefile
+test/test_iitii
