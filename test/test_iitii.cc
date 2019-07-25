@@ -53,7 +53,7 @@ TEST_CASE("fuzz") {
     default_random_engine R(42);
     uniform_int_distribution<uint32_t> begD(1, 42000);
     geometric_distribution<uint16_t> lenD(0.01);
-    size_t count = 0, cost = 0;
+    size_t queries = 0, results = 0, cost = 0;
 
     for (int N = 3; N < 1000000; N *= 3) {  // base != 2 provides varying tree fullness patterns
         vector<pospair> examples;
@@ -75,24 +75,28 @@ TEST_CASE("fuzz") {
         for (int i = 0; i < 1000; ++i) {
             auto qbeg = begD(R);
             auto qend = qbeg + 100;
-            vector<pospair> results;
-            cost += tree.overlap(qbeg, qend, results);
+            vector<pospair> ans;
+            cost += tree.overlap(qbeg, qend, ans);
 
-            vector<pospair> results2;
+            vector<pospair> naive;
             for (const auto& p : examples) {
                 if (qbeg < p.second && p.first < qend) {
-                    results2.push_back(p);
+                    naive.push_back(p);
                 }
             }
 
-            REQUIRE(results.size() == results2.size());
+            REQUIRE(ans.size() == naive.size());
             bool alleq = true;
-            for (auto p1 = results.begin(), p2 = results2.begin(); p1 != results.end(); ++p1, ++p2) {
+            for (auto p1 = ans.begin(), p2 = naive.begin(); p1 != ans.end(); ++p1, ++p2) {
                 alleq = alleq && (*p1 == *p2);
             }
             REQUIRE(alleq);
-            count += results.size();
+            results += ans.size();
+            ++queries;
         }
     }
-    cout << "fuzz count = " << count << ", cost = " << cost << endl;
+    cout << "fuzz queries = " << queries << ", results = " << results << ", cost = " << cost << endl;
+    // if only the following assertion fails, there's probably a regression in computing or using
+    // the internal_max_end augment values
+    REQUIRE(cost < 2*results);
 }

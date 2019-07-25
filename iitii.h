@@ -3,21 +3,24 @@
 #include <algorithm>
 #include <assert.h>
 
-// base template for the internal representation of a node within an implicit interval tree
-//   Pos      : integral position type (e.g. uint32_t, uint64_t)
-//   Item     : arbitrary type of items to be indexed
-//   get_beg  : function to get interval begin position from Item
-//   get_end  : function to get interval end position from Item
-// For good performance, beg & end should just access members of Item (i.e. O(1) cache-local fetch)
-// Subclass instantiations may add more augment values.
-template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
+// Base template for the internal representation of a node within an implicit interval tree
+// User should not care about this; subclass instantiations may add more members for more-
+// exotically augmented classes of implicit interval trees
+template<
+    typename Pos,              // numeric position type (e.g. uint32_t, double)
+    typename Item,             // arbitrary type of items to be indexed
+    Pos get_beg(const Item&),  // function to get interval begin position from item
+    Pos get_end(const Item&)   // function to get interval end position from item
+>   // get_beg & get_end should just access members of Item (i.e. cache-local fetch)
 struct iit_node_base {
+    static const Pos npos = std::numeric_limits<Pos>::max();    // reserved constant for invalid Pos
+
     Item item;
     Pos inside_max_end;   // max end of this & subtree (as in textbook augmented interval tree)
 
     iit_node_base(const Item& item_)
         : item(item_)
-        , inside_max_end(std::numeric_limits<Pos>::max())
+        , inside_max_end(get_end(item))
         {}
     inline Pos beg() const {
         return get_beg(item);
@@ -34,14 +37,14 @@ struct iit_node_base {
     }
 };
 
-// base template for an implicit interval tree, with internal repr Node<Pos, Item, ...>
+// Base template for an implicit interval tree, with internal repr Node<Pos, Item, ...>
+// Users should not use this directly, but instantiate iit (below) or other subclasses
 template<typename Pos, typename Item, typename Node>
 class iit_base {
     // aliases to help keep the Pos, Rank, and Level concepts straight
     typedef std::size_t Rank;   // rank of a node, its index in the sorted array (or beyond, if dark)
     typedef std::size_t Level;  // level in tree
 
-    static const Pos npos = std::numeric_limits<Pos>::max();    // reserved constant for invalid Pos
     static const Rank nrank = std::numeric_limits<Rank>::max();
 
     std::vector<Node> nodes;  // array of Nodes sorted by beginning position
@@ -149,14 +152,8 @@ public:
             }
 
             // bottom-up indexing
-            Pos rightmost_ime;
+            Pos rightmost_ime = nodes[rightmost_anc[0]].end();
             for (Level lv=1; lv <= root_level; ++lv) {
-                if (rightmost_anc[lv-1] < nodes.size()) {
-                    // inside_max_end of the rightmost leaf's ancestor on lv-1.
-                    // if the ancestor is dark, then it adopts the previous level value.
-                    rightmost_ime = nodes[rightmost_anc[lv-1]].inside_max_end;
-                }
-
                 // for each in nodes on this level
                 size_t x = size_t(1)<<(lv-1), step = x<<2;
                 for (Rank n = (x<<1)-1; n < nodes.size(); n += step) {
@@ -166,9 +163,17 @@ public:
                     if (right(n) < nodes.size()) {
                         ime = std::max(ime, nodes[right(n)].inside_max_end);
                     } else {
+                        // ime = std::max(ime, std::numeric_limits<Pos>::max()); // rightmost_ime);
                         ime = std::max(ime, rightmost_ime);
                     }
+                    assert(ime != Node::npos);
                     nodes[n].inside_max_end = ime;
+                }
+
+                if (rightmost_anc[lv] < nodes.size()) {
+                    // inside_max_end of the rightmost leaf's ancestor on lv-1.
+                    // if the ancestor is dark, then it adopts the previous level value.
+                    rightmost_ime = nodes[rightmost_anc[lv]].inside_max_end;
                 }
             }
         }
@@ -188,13 +193,13 @@ public:
     }
 };
 
-// basic implicit interval tree
-//   Pos      : integral position type (e.g. uint32_t, uint64_t)
-//   Item     : arbitrary type of items to be indexed
-//   get_beg  : function to get interval begin position from Item
-//   get_end  : function to get interval end position from Item
-// For good performance, beg & end should just access members of Item (i.e. O(1) cache-local fetch)
-template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
+// Basic implicit interval tree
+template<
+    typename Pos,              // numeric position type (e.g. uint32_t, double)
+    typename Item,             // arbitrary type of items to be indexed
+    Pos get_beg(const Item&),  // function to get interval begin position from item
+    Pos get_end(const Item&)   // function to get interval end position from item
+>   // get_beg & get_end should just access members of Item (i.e. cache-local fetch)
 class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>> {
 public:
     template<typename InputIterator>
