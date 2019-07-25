@@ -41,7 +41,7 @@ class iitii {
     // compute a node's level, the # of 1 bits below the lowest 0 bit
     inline Level level(Rank node) const {
         assert(node < (Rank(1)<<(root_level+1))-1);
-        Level ans = __builtin_ctzll(~node);
+        Level ans = __builtin_ctzll(~node);  // bitwise-negate & count trailing zeroes
         #ifndef NDEBUG
         Level chk;
         for (chk=0; node&1; chk++, node>>=1);
@@ -50,6 +50,7 @@ class iitii {
         return ans;
     }
 
+    // get node's parent, or nrank if called on the root
     inline Rank parent(Rank node) const {
         assert(node < ((Rank(1)<<(root_level+1))-1));
         if (node == root) {
@@ -65,30 +66,37 @@ class iitii {
         return node+ofs;
     }
 
+    // get node's left child, or nrank if called on a leaf
     inline Rank left(Rank node) const {
         Level lv = level(node);
         return lv > 0 ? node - (Rank(1) << (lv-1)) : nrank;
     }
 
+    // get node's right child, or nrank if called on a leaf
     inline Rank right(Rank node) const {
         Level lv = level(node);
         return lv > 0 ? node + (Rank(1) << (lv-1)) : nrank;
     }
 
+    // top-down overlap scan for [qbeg,qend). return # of nodes visited
     size_t scan(Rank subtree, Pos qbeg, Pos qend, std::vector<Item>& ans) const {
         if (subtree == nrank) {
             return 0;
         }
         if (subtree >= A.size()) {
+            // When we visit an absent node, the right child must also be absent, due to the order
+            // in which the binary tree fills up (left, parent, right). So we just need to descend
+            // into the left child -- which either is, or leads to, a present node.
             return 1 + scan(left(subtree), qbeg, qend, ans);
         }
+
         size_t cost = 1;
         const Node& n = A[subtree];
-        if (n.inside_max_end > qbeg) {
+        if (n.inside_max_end > qbeg) {     // something in current subtree extends into/over query
             cost += scan(left(subtree), qbeg, qend, ans);
             Pos nbeg = beg(n.item);
-            if (nbeg < qend) {
-                if (qbeg < end(n.item)) {
+            if (nbeg < qend) {             // this node isn't already past query
+                if (end(n.item) > qbeg) {  // this node overlaps query
                     ans.push_back(n.item);
                 }
                 cost += scan(right(subtree), qbeg, qend, ans);
@@ -115,6 +123,7 @@ public:
         , min_beg(npos)
         , max_beg(std::numeric_limits<Pos>::min())
     {
+        // store the items
         std::for_each(first, last, [&](const Item& it) {
             Pos beg_it = beg(it);
             min_beg = std::min(min_beg, beg_it);
@@ -122,15 +131,27 @@ public:
             A.push_back(Node(it));
         });
         if (A.size()) {
-            std::sort(A.begin(), A.end(),
-                  [](const Node& lhs, const Node& rhs) { return beg(lhs.item) < beg(rhs.item); });
+            // sort the nodes by interval
+            std::sort(A.begin(), A.end(), [](const Node& lhs, const Node& rhs) {
+                auto begl = beg(lhs.item), begr = beg(rhs.item);
+                if (begl == begr) {
+                    return end(lhs.item) < end(rhs.item);
+                }
+                return begl < begr;
+            });
 
+            // determine implied tree geometry
             for (root_level = 0; (Rank(1)<<(root_level+1))-1 < A.size(); root_level++);
             root = (Rank(1) << root_level) - 1;
-            
-            Rank rightmost_leaf = A.size() - (2 - A.size() % 2);
-            Rank rightmost_anc = rightmost_leaf;
-            Pos rightmost_ime = A[rightmost_anc].inside_max_end;
+
+            // memoize the rightmost present leaf and its ancestors, which we'll use to account for
+            // absent parts of the tree during indexing
+            std::vector<Rank> rightmost_anc({ A.size() - (2 - A.size() % 2) });  // max present leaf
+            while (rightmost_anc.back() != root) {
+                rightmost_anc.push_back(parent(rightmost_anc.back()));
+            }
+
+            Pos rightmost_ime = A[rightmost_anc[0]].inside_max_end;
             for (Level lv=1; lv <= root_level; ++lv) {
                 size_t x = size_t(1)<<(lv-1), step = x<<2;
                 for (Rank n = (x<<1)-1; n < A.size(); n += step) {
@@ -143,9 +164,8 @@ public:
                     }
                     A[n].inside_max_end = ime;
                 }
-                rightmost_anc = parent(rightmost_anc);
-                if (rightmost_anc < A.size()) {
-                    rightmost_ime = A[rightmost_anc].inside_max_end;
+                if (rightmost_anc[lv] < A.size()) {
+                    rightmost_ime = A[rightmost_anc[lv]].inside_max_end;
                 }
             }
         }

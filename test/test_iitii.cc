@@ -2,7 +2,7 @@
 #include <utility>
 #include <random>
 #include "iitii.h"
-#define CATCH_CONFIG_MAIN  // This tells Catch to provide a main() - only do this in one cpp file
+#define CATCH_CONFIG_MAIN
 #include "catch2/catch.hpp"
 
 using namespace std;
@@ -31,12 +31,12 @@ TEST_CASE("cgranges example") {
     REQUIRE(results[1].first == 12);
 }
 
-TEST_CASE("ghost nodes (N=5)") {
+TEST_CASE("absent nodes (N=5)") {
     // the three rank levels are:
     // 2.       3
     // 1.     1   5
     // 0.    0 2 4 6
-    // with N=5 (ranks 0-4), nodes 5 and 6 are "ghosts"; nb ghost node 5 is the parent of 4
+    // with N=5 (ranks 0-4), nodes 5 and 6 are "absent"; absent node 5 is the parent of 4
     //
     // lets set up an example where node 4 shall be part of the result set
 
@@ -55,14 +55,24 @@ TEST_CASE("fuzz") {
     geometric_distribution<uint16_t> lenD(0.01);
     size_t count = 0, cost = 0;
 
-    for (int N = 3; N < 500000; N *= 3) {
+    for (int N = 3; N < 1000000; N *= 3) {  // non-2 base provides varying tree fullness patterns
         vector<pospair> examples;
         for (int i = 0; i < N; ++i) {
             auto beg = begD(R);
             examples.push_back({ beg, beg+lenD(R) });
         }
+
         iitii<pos, pospair, &iitii_beg, &iitii_end> tree(examples.begin(), examples.end());
-        for (int i = 0; i < 10000; ++i) {
+
+        std::sort(examples.begin(), examples.end(), [](const pospair& lhs, const pospair& rhs) {
+            auto begl = iitii_beg(lhs), begr = iitii_beg(rhs);
+            if (begl == begr) {
+                return iitii_end(lhs) < iitii_end(rhs);
+            }
+            return begl < begr;
+        });
+
+        for (int i = 0; i < 1000; ++i) {
             auto qbeg = begD(R);
             auto qend = qbeg + 100;
             vector<pospair> results;
@@ -74,7 +84,13 @@ TEST_CASE("fuzz") {
                     results2.push_back(p);
                 }
             }
+
             REQUIRE(results.size() == results2.size());
+            bool alleq = true;
+            for (auto p1 = results.begin(), p2 = results2.begin(); p1 != results.end(); ++p1, ++p2) {
+                alleq = alleq && (*p1 == *p2);
+            }
+            REQUIRE(alleq);
             count += results.size();
         }
     }
