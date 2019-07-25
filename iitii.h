@@ -3,30 +3,46 @@
 #include <algorithm>
 #include <assert.h>
 
-// class iitii template parameters:
-//   Pos  : integral position type (e.g. uint32_t, uint64_t)
-//   Item : arbitrary type of items to be indexed
-//   beg  : function to get interval begin position from Item
-//   end  : function to get interval end position from Item
+// base template for the internal representation of a node within an implicit interval tree
+//   Pos      : integral position type (e.g. uint32_t, uint64_t)
+//   Item     : arbitrary type of items to be indexed
+//   get_beg  : function to get interval begin position from Item
+//   get_end  : function to get interval end position from Item
 // For good performance, beg & end should just access members of Item (i.e. O(1) cache-local fetch)
-template<typename Pos, typename Item, Pos beg(const Item&), Pos end(const Item&)>
-class iitii {
+// Subclass instantiations may add more augment values.
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
+struct iit_node_base {
+    Item item;
+    Pos inside_max_end;   // max end of this & subtree (as in textbook augmented interval tree)
+
+    iit_node_base(const Item& item_)
+        : item(item_)
+        , inside_max_end(std::numeric_limits<Pos>::max())
+        {}
+    inline Pos beg() const {
+        return get_beg(item);
+    }
+    inline Pos end() const {
+        return get_end(item);
+    }
+    bool operator<(const iit_node_base<Pos, Item, get_beg, get_end>& rhs) const {
+        auto lbeg = beg(), rbeg = rhs.beg();
+        if (lbeg == rbeg) {
+            return end() < rhs.end();
+        }
+        return lbeg < rbeg;
+    }
+};
+
+// base template for an implicit interval tree, with internal repr Node<Pos, Item, ...>
+template<typename Pos, typename Item, typename Node>
+class iit_base {
     // aliases to help keep the Pos, Rank, and Level concepts straight
     typedef std::size_t Rank;   // rank of a node, its index in the sorted array (or beyond, if dark)
     typedef std::size_t Level;  // level in tree
 
-    static const Pos npos = std::numeric_limits<Pos>::max();  // reserved constant for invalid Pos
+    static const Pos npos = std::numeric_limits<Pos>::max();    // reserved constant for invalid Pos
     static const Rank nrank = std::numeric_limits<Rank>::max();
-
-    struct Node {  // augmented item
-        Item item;
-        Pos inside_max_end;   // max end of this & subtree (as in textbook augmented interval tree)
-
-        Node(const Item& item_)
-            : item(item_)
-            , inside_max_end(npos)
-            {}
-    };
 
     std::vector<Node> nodes;  // array of Nodes sorted by beginning position
     size_t full_size;         // size of the full binary tree containing the nodes; liable to be
@@ -94,9 +110,9 @@ class iitii {
         const Node& n = nodes[subtree];
         if (n.inside_max_end > qbeg) {     // something in current subtree extends into/over query
             cost += scan(left(subtree), qbeg, qend, ans);
-            Pos nbeg = beg(n.item);
+            Pos nbeg = n.beg();
             if (nbeg < qend) {             // this node isn't already past query
-                if (end(n.item) > qbeg) {  // this node overlaps query
+                if (n.end() > qbeg) {  // this node overlaps query
                     ans.push_back(n.item);
                 }
                 cost += scan(right(subtree), qbeg, qend, ans);
@@ -107,7 +123,7 @@ class iitii {
 
 public:
     template<typename InputIterator>
-    iitii(InputIterator first, InputIterator last)
+    iit_base(InputIterator first, InputIterator last)
         : root_level(0)
         , root(std::numeric_limits<Rank>::max())
     {
@@ -121,13 +137,7 @@ public:
 
         if (nodes.size()) {
             // sort the nodes by interval
-            std::sort(nodes.begin(), nodes.end(), [](const Node& lhs, const Node& rhs) {
-                auto begl = beg(lhs.item), begr = beg(rhs.item);
-                if (begl == begr) {
-                    return end(lhs.item) < end(rhs.item);
-                }
-                return begl < begr;
-            });
+            std::sort(nodes.begin(), nodes.end());
 
             // memoize the rightmost leaf and its ancestors, which we'll use during indexing to
             // skip dark areas of the tree
@@ -151,7 +161,7 @@ public:
                 size_t x = size_t(1)<<(lv-1), step = x<<2;
                 for (Rank n = (x<<1)-1; n < nodes.size(); n += step) {
                     // figure inside_max_end
-                    Pos ime = end(nodes[n].item);
+                    Pos ime = nodes[n].end();
                     ime = std::max(ime, nodes[left(n)].inside_max_end);
                     if (right(n) < nodes.size()) {
                         ime = std::max(ime, nodes[right(n)].inside_max_end);
@@ -178,3 +188,17 @@ public:
     }
 };
 
+// basic implicit interval tree
+//   Pos      : integral position type (e.g. uint32_t, uint64_t)
+//   Item     : arbitrary type of items to be indexed
+//   get_beg  : function to get interval begin position from Item
+//   get_end  : function to get interval end position from Item
+// For good performance, beg & end should just access members of Item (i.e. O(1) cache-local fetch)
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
+class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>> {
+public:
+    template<typename InputIterator>
+    iit(InputIterator first, InputIterator last)
+        : iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>>(first, last)
+        {}
+};

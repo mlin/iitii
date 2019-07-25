@@ -19,7 +19,7 @@ pos iitii_end(const pospair& p) {
 }
 
 auto build_tree(const vector<pospair>& examples) {
-    return iitii<pos, pospair, &iitii_beg, &iitii_end>(examples.begin(), examples.end());
+    return iit<pos, pospair, &iitii_beg, &iitii_end>(examples.begin(), examples.end());
 }
 
 TEST_CASE("cgranges example") {
@@ -41,7 +41,7 @@ TEST_CASE("dark nodes (N=5)") {
     // lets set up an example where node 4 shall be part of the result set
 
     vector<pospair> examples = { { 0, 7 }, {1, 2}, {2, 4}, {3, 6}, {4, 9} };
-    iitii<pos, pospair, &iitii_beg, &iitii_end> tree(examples.begin(), examples.end());
+    auto tree = build_tree(examples);
 
     auto results = tree.overlap(6, 10);
     REQUIRE(results.size() == 2);
@@ -62,7 +62,7 @@ TEST_CASE("fuzz") {
             examples.push_back({ beg, beg+lenD(R) });
         }
 
-        iitii<pos, pospair, &iitii_beg, &iitii_end> tree(examples.begin(), examples.end());
+        auto tree = build_tree(examples);
 
         std::sort(examples.begin(), examples.end(), [](const pospair& lhs, const pospair& rhs) {
             auto begl = iitii_beg(lhs), begr = iitii_beg(rhs);
