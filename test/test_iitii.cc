@@ -31,12 +31,12 @@ TEST_CASE("cgranges example") {
     REQUIRE(results[1].first == 12);
 }
 
-TEST_CASE("absent nodes (N=5)") {
+TEST_CASE("dark nodes (N=5)") {
     // the three rank levels are:
     // 2.       3
     // 1.     1   5
     // 0.    0 2 4 6
-    // with N=5 (ranks 0-4), nodes 5 and 6 are "absent"; absent node 5 is the parent of 4
+    // with N=5 (ranks 0-4), nodes 5 and 6 are "dark"; dark node 5 is the parent of 4
     //
     // lets set up an example where node 4 shall be part of the result set
 
@@ -55,7 +55,7 @@ TEST_CASE("fuzz") {
     geometric_distribution<uint16_t> lenD(0.01);
     size_t count = 0, cost = 0;
 
-    for (int N = 3; N < 1000000; N *= 3) {  // non-2 base provides varying tree fullness patterns
+    for (int N = 3; N < 1000000; N *= 3) {  // base != 2 provides varying tree fullness patterns
         vector<pospair> examples;
         for (int i = 0; i < N; ++i) {
             auto beg = begD(R);

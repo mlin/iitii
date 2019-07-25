@@ -11,36 +11,34 @@
 // For good performance, beg & end should just access members of Item (i.e. O(1) cache-local fetch)
 template<typename Pos, typename Item, Pos beg(const Item&), Pos end(const Item&)>
 class iitii {
+    // aliases to help keep the Pos, Rank, and Level concepts straight
+    typedef std::size_t Rank;   // rank of a node, its index in the sorted array (or beyond, if dark)
+    typedef std::size_t Level;  // level in tree
+
     static const Pos npos = std::numeric_limits<Pos>::max();  // reserved constant for invalid Pos
+    static const Rank nrank = std::numeric_limits<Rank>::max();
 
     struct Node {  // augmented item
         Item item;
         Pos inside_max_end;   // max end of this & subtree (as in textbook augmented interval tree)
-        Pos outside_max_end;  // max end of all nodes n with A[n].beg <= this->beg, excluding this & subtree
-        Pos outside_min_beg;  // min beg of all nodes n with A[n].beg >= this->beg, excluding this & subtree
 
         Node(const Item& item_)
             : item(item_)
-            , inside_max_end(end(item_))
-            , outside_max_end(std::numeric_limits<Pos>::min())
-            , outside_min_beg(npos)
+            , inside_max_end(npos)
             {}
     };
-    std::vector<Node> A;       // sorted array of Nodes
 
-    // beg & end extreme values in A
-    Pos min_beg, max_beg;
+    std::vector<Node> nodes;  // array of Nodes sorted by beginning position
+    size_t full_size;         // size of the full binary tree containing the nodes; liable to be
+                              // as large as 2*nodes.size()-1 including implicit "dark" nodes
 
-    // type aliases Rank and Level, just to help keep these concepts straight (& Pos)
-    typedef std::size_t Rank;  // rank of a node, or its index in A
     Rank root;
-    static const Rank nrank = std::numeric_limits<Rank>::max();  // reserved constant for invalid Rank
-    typedef std::size_t Level;
     Level root_level;          //  = K in cgranges
+
 
     // compute a node's level, the # of 1 bits below the lowest 0 bit
     inline Level level(Rank node) const {
-        assert(node < (Rank(1)<<(root_level+1))-1);
+        assert(node < full_size);
         Level ans = __builtin_ctzll(~node);  // bitwise-negate & count trailing zeroes
         #ifndef NDEBUG
         Level chk;
@@ -52,7 +50,7 @@ class iitii {
 
     // get node's parent, or nrank if called on the root
     inline Rank parent(Rank node) const {
-        assert(node < ((Rank(1)<<(root_level+1))-1));
+        assert(node < full_size);
         if (node == root) {
             return nrank;
         }
@@ -83,15 +81,17 @@ class iitii {
         if (subtree == nrank) {
             return 0;
         }
-        if (subtree >= A.size()) {
-            // When we visit an absent node, the right child must also be absent, due to the order
-            // in which the binary tree fills up (left, parent, right). So we just need to descend
-            // into the left child -- which either is, or leads to, a present node.
+        assert(subtree < full_size);
+        if (subtree >= nodes.size()) {
+            // When we visit a dark node, the right child must also be dark, due to the order in
+            // which the binary tree fills up (left, parent, right). So we just need to descend
+            // into the left branch, which must eventually lead to real node(s) perhaps via a chain
+            // of dark ones. If there were nothing there then the current dark node wouldn't exist.
             return 1 + scan(left(subtree), qbeg, qend, ans);
         }
 
         size_t cost = 1;
-        const Node& n = A[subtree];
+        const Node& n = nodes[subtree];
         if (n.inside_max_end > qbeg) {     // something in current subtree extends into/over query
             cost += scan(left(subtree), qbeg, qend, ans);
             Pos nbeg = beg(n.item);
@@ -105,34 +105,23 @@ class iitii {
         return cost;
     }
 
-    Rank interpolate(Pos q) const {
-        if (q <= min_beg) {
-            return 0;
-        }
-        if (q >= max_beg) {
-            return A.size()-1;
-        }
-        return 2*Rank(((q-min_beg)/double(max_beg-min_beg))*(A.size()/2));
-    }
-
 public:
     template<typename InputIterator>
     iitii(InputIterator first, InputIterator last)
         : root_level(0)
         , root(std::numeric_limits<Rank>::max())
-        , min_beg(npos)
-        , max_beg(std::numeric_limits<Pos>::min())
     {
         // store the items
-        std::for_each(first, last, [&](const Item& it) {
-            Pos beg_it = beg(it);
-            min_beg = std::min(min_beg, beg_it);
-            max_beg = std::max(max_beg, beg_it);
-            A.push_back(Node(it));
-        });
-        if (A.size()) {
+        std::for_each(first, last, [&](const Item& it) { nodes.push_back(Node(it)); });
+
+        // compute the implied tree geometry
+        for (root_level = 0, full_size = 0; full_size < nodes.size();
+             ++root_level, full_size = (size_t(1)<<(root_level+1)) - 1);
+        root = (Rank(1) << root_level) - 1;
+
+        if (nodes.size()) {
             // sort the nodes by interval
-            std::sort(A.begin(), A.end(), [](const Node& lhs, const Node& rhs) {
+            std::sort(nodes.begin(), nodes.end(), [](const Node& lhs, const Node& rhs) {
                 auto begl = beg(lhs.item), begr = beg(rhs.item);
                 if (begl == begr) {
                     return end(lhs.item) < end(rhs.item);
@@ -140,58 +129,52 @@ public:
                 return begl < begr;
             });
 
-            // determine implied tree geometry
-            for (root_level = 0; (Rank(1)<<(root_level+1))-1 < A.size(); root_level++);
-            root = (Rank(1) << root_level) - 1;
-
-            // memoize the rightmost present leaf and its ancestors, which we'll use to account for
-            // absent parts of the tree during indexing
-            std::vector<Rank> rightmost_anc({ A.size() - (2 - A.size() % 2) });  // max present leaf
+            // memoize the rightmost leaf and its ancestors, which we'll use during indexing to
+            // skip dark areas of the tree
+            std::vector<Rank> rightmost_anc({
+                nodes.size() - (2 - nodes.size() % 2)  // rightmost leaf in nodes (not dark)
+            });
             while (rightmost_anc.back() != root) {
                 rightmost_anc.push_back(parent(rightmost_anc.back()));
             }
 
-            Pos rightmost_ime = A[rightmost_anc[0]].inside_max_end;
+            // bottom-up indexing
+            Pos rightmost_ime;
             for (Level lv=1; lv <= root_level; ++lv) {
+                if (rightmost_anc[lv-1] < nodes.size()) {
+                    // inside_max_end of the rightmost leaf's ancestor on lv-1.
+                    // if the ancestor is dark, then it adopts the previous level value.
+                    rightmost_ime = nodes[rightmost_anc[lv-1]].inside_max_end;
+                }
+
+                // for each in nodes on this level
                 size_t x = size_t(1)<<(lv-1), step = x<<2;
-                for (Rank n = (x<<1)-1; n < A.size(); n += step) {
-                    Pos ime = A[n].inside_max_end;
-                    ime = std::max(ime, A[left(n)].inside_max_end);
-                    if (right(n) < A.size()) {
-                        ime = std::max(ime, A[right(n)].inside_max_end);
+                for (Rank n = (x<<1)-1; n < nodes.size(); n += step) {
+                    // figure inside_max_end
+                    Pos ime = end(nodes[n].item);
+                    ime = std::max(ime, nodes[left(n)].inside_max_end);
+                    if (right(n) < nodes.size()) {
+                        ime = std::max(ime, nodes[right(n)].inside_max_end);
                     } else {
                         ime = std::max(ime, rightmost_ime);
                     }
-                    A[n].inside_max_end = ime;
-                }
-                if (rightmost_anc[lv] < A.size()) {
-                    rightmost_ime = A[rightmost_anc[lv]].inside_max_end;
+                    nodes[n].inside_max_end = ime;
                 }
             }
         }
-        // FIXME populate outside_max_end & outside_min_beg
     }
 
+    // overlap query; fill ans and return query cost (number of tree nodes visited)
     size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const {
         ans.clear();
         return scan(root, qbeg, qend, ans);
     }
 
+    // overlap query, return vector of results
     std::vector<Item> overlap(Pos qbeg, Pos qend) const {
         std::vector<Item> ans;
-        scan(root, qbeg, qend, ans);
+        overlap(qbeg, qend, ans);
         return ans;
     }
-    /*
-    size_t overlap_interpolate(Pos qbeg, Pos qend, std::vector<Item>& ans) const {
-        Rank subtree = interpolate(qbeg);
-        Level level = 0;
-        while (level < root_level && !(effective_outside_max_end(subtree) <= qbeg &&
-                                       qend <= effective_outside_min_beg(subtree))) {
-            subtree = parent(subtree, level++);
-        }
-
-        ans.clear();
-        return scan(qbeg, qend, ans);
-    } */
 };
+
