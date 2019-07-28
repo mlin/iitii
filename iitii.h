@@ -247,8 +247,9 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     using super::full_size, super::nrank;
     using super::level, super::root, super::root_level;
 
-    // leaf prediction model: the leaves are the even-ranked nodes; so predict,
-    //   2*floor(w[1]*qbeg + w[0])
+    // Model to predict the rank of the closest leaf for a given begin position.
+    // The leaves are the even-ranked nodes, so we regress using rank/2 and then double the
+    // prediction: 2*floor(w[1]*qbeg + w[0])
     float w[2] = { 0.0f, 0.0f };
     Rank predict_leaf(Pos qbeg) const {
         float halfrank = w[1]*float(qbeg) + w[0];
@@ -363,7 +364,8 @@ public:
         Rank subtree = predict_leaf(qbeg);
         assert(level(subtree) == 0);
         size_t climb_cost = 0;
-        // climb until we hit the root or our necessary & sufficient criteria are met
+
+        // climb until our necessary & sufficient criteria are met, or the root
         while (subtree != root) {
             if (subtree < nodes.size() &&
                 nodes[subtree].outside_max_end <= qbeg &&

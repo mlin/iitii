@@ -1,6 +1,7 @@
 #include <iostream>
 #include <utility>
 #include <random>
+#include <math.h>
 #include "iitii.h"
 #define CATCH_CONFIG_MAIN
 #include "catch2/catch.hpp"
@@ -80,15 +81,27 @@ TEST_CASE("dark nodes (N=5) with iitii") {
 
 TEST_CASE("fuzz") {
     default_random_engine R(42);
-    uniform_int_distribution<uint32_t> begD(1, 42000);
+
+    // generate random intervals with beg ~ begD and length ~ lenD
+    uniform_int_distribution<uint32_t> begD(1, 420000);
     geometric_distribution<uint16_t> lenD(0.01);
 
-    for (int N = 3; N < 1000000; N *= 3) {  // base != 2 provides varying tree fullness patterns
+    // also spike in a bunch of intervals starting at a few selected positions, since colliding beg
+    // positions trigger certain obscure code paths
+    vector<uint32_t> spike_positions = {100, 1000, 10000, 100000, 420000};
+
+    for (int N = 3; N < 2000000; N *= 3) {  // base != 2 provides varying tree fullness patterns
+        const size_t Q = 1000; // # queries on for each N
         size_t results = 0, cost = 0, costii = 0;
 
         vector<pospair> examples;
         for (int i = 0; i < N; ++i) {
             auto beg = begD(R);
+            examples.push_back({ beg, beg+lenD(R) });
+        }
+
+        for (int i = 0; i < N/10; ++i) {
+            auto beg = spike_positions[i % spike_positions.size()];
             examples.push_back({ beg, beg+lenD(R) });
         }
 
@@ -103,9 +116,9 @@ TEST_CASE("fuzz") {
             return begl < begr;
         });
 
-        for (int i = 0; i < 1000; ++i) {
+        for (size_t i = 0; i < Q; ++i) {
             auto qbeg = begD(R);
-            auto qend = qbeg + 100;
+            auto qend = qbeg + 42;
             vector<pospair> ans;
             cost += tree.overlap(qbeg, qend, ans);
 
@@ -134,13 +147,14 @@ TEST_CASE("fuzz") {
         }
 
         cout << "fuzz N = " << N << ": results = " << results << ", cost = " << cost << ", costii = " << costii << endl;
-        // if only the following assertion fails, there's probably a regression in computing or using
-        // the internal_max_end augment values
-        if (N > 1000) {
-            REQUIRE(cost < 4*results);
+
+        // guess bound on cost per query: 2*(lg(N) + results)
+        size_t cost_bound = size_t(2*Q*(log2(N) + results/Q + 1));
+        REQUIRE(cost < cost_bound);
+
+        // iitii should show a cost advantage unless query cost is dominated by result set size
+        if (log2(N) > results/Q + 2) {
+            REQUIRE(costii < cost);
         }
     }
 }
-
-// TODO: careful test cases with colliding node intervals
-// In the IIT, either left or right child can be equal to the parent.
