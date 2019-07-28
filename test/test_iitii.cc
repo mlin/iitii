@@ -10,20 +10,33 @@ using namespace std;
 typedef uint32_t pos;
 typedef pair<pos, pos> pospair;
 
-pos iitii_beg(const pospair& p) {
+pos get_beg(const pospair& p) {
     return p.first;
 }
 
-pos iitii_end(const pospair& p) {
+pos get_end(const pospair& p) {
     return p.second;
 }
 
-auto build_tree(const vector<pospair>& examples) {
-    return iit<pos, pospair, &iitii_beg, &iitii_end>(examples.begin(), examples.end());
+auto build_iit(const vector<pospair>& examples) {
+    return iit<pos, pospair, &get_beg, &get_end>(examples.begin(), examples.end());
+}
+
+auto build_iitii(const vector<pospair>& examples) {
+    return iitii<pos, pospair, &get_beg, &get_end>(examples.begin(), examples.end());
 }
 
 TEST_CASE("cgranges example") {
-    auto tree = build_tree({ { 12, 34 }, { 0, 23 }, { 34, 56 } });
+    auto tree = build_iit({ { 12, 34 }, { 0, 23 }, { 34, 56 } });
+
+    auto results = tree.overlap(22, 25);
+    REQUIRE(results.size() == 2);
+    REQUIRE(results[0].first == 0);
+    REQUIRE(results[1].first == 12);
+}
+
+TEST_CASE("cgranges example with iitii") {
+    auto tree = build_iitii({ { 12, 34 }, { 0, 23 }, { 34, 56 } });
 
     auto results = tree.overlap(22, 25);
     REQUIRE(results.size() == 2);
@@ -41,33 +54,51 @@ TEST_CASE("dark nodes (N=5)") {
     // lets set up an example where node 4 shall be part of the result set
 
     vector<pospair> examples = { { 0, 7 }, {1, 2}, {2, 4}, {3, 6}, {4, 9} };
-    auto tree = build_tree(examples);
+    auto tree = build_iit(examples);
 
     auto results = tree.overlap(6, 10);
     REQUIRE(results.size() == 2);
     REQUIRE(results[0].first == 0);
     REQUIRE(results[1].first == 4);
+
+    // to answer the following query, interval tree algo should visit nodes 1, 3, 4, and 5
+    REQUIRE(tree.overlap(7, 10, results) == 4);
+}
+
+TEST_CASE("dark nodes (N=5) with iitii") {
+    vector<pospair> examples = { { 0, 7 }, {1, 2}, {2, 4}, {3, 6}, {4, 9} };
+    auto tree = build_iitii(examples);
+
+    auto results = tree.overlap(6, 10);
+    REQUIRE(results.size() == 2);
+    REQUIRE(results[0].first == 0);
+    REQUIRE(results[1].first == 4);
+
+    // with the interpolation index, we can answer this query in one step
+    REQUIRE(tree.overlap(7, 10, results) == 1);
 }
 
 TEST_CASE("fuzz") {
     default_random_engine R(42);
     uniform_int_distribution<uint32_t> begD(1, 42000);
     geometric_distribution<uint16_t> lenD(0.01);
-    size_t queries = 0, results = 0, cost = 0;
 
     for (int N = 3; N < 1000000; N *= 3) {  // base != 2 provides varying tree fullness patterns
+        size_t results = 0, cost = 0, costii = 0;
+
         vector<pospair> examples;
         for (int i = 0; i < N; ++i) {
             auto beg = begD(R);
             examples.push_back({ beg, beg+lenD(R) });
         }
 
-        auto tree = build_tree(examples);
+        auto tree = build_iit(examples);
+        auto treeii = build_iitii(examples);
 
         std::sort(examples.begin(), examples.end(), [](const pospair& lhs, const pospair& rhs) {
-            auto begl = iitii_beg(lhs), begr = iitii_beg(rhs);
+            auto begl = get_beg(lhs), begr = get_beg(rhs);
             if (begl == begr) {
-                return iitii_end(lhs) < iitii_end(rhs);
+                return get_end(lhs) < get_end(rhs);
             }
             return begl < begr;
         });
@@ -92,11 +123,24 @@ TEST_CASE("fuzz") {
             }
             REQUIRE(alleq);
             results += ans.size();
-            ++queries;
+
+            costii += treeii.overlap(qbeg, qend, ans);
+            REQUIRE(ans.size() == naive.size());
+            alleq = true;
+            for (auto p1 = ans.begin(), p2 = naive.begin(); p1 != ans.end(); ++p1, ++p2) {
+                alleq = alleq && (*p1 == *p2);
+            }
+            REQUIRE(alleq);
+        }
+
+        cout << "fuzz N = " << N << ": results = " << results << ", cost = " << cost << ", costii = " << costii << endl;
+        // if only the following assertion fails, there's probably a regression in computing or using
+        // the internal_max_end augment values
+        if (N > 1000) {
+            REQUIRE(cost < 4*results);
         }
     }
-    cout << "fuzz queries = " << queries << ", results = " << results << ", cost = " << cost << endl;
-    // if only the following assertion fails, there's probably a regression in computing or using
-    // the internal_max_end augment values
-    REQUIRE(cost < 2*results);
 }
+
+// TODO: careful test cases with colliding node intervals
+// In the IIT, either left or right child can be equal to the parent.

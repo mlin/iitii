@@ -22,7 +22,7 @@ ExternalProject_Add(catch
 ExternalProject_Get_Property(catch source_dir)
 include_directories(${source_dir}/single_include)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -std=c++14 -Wall -Werror=return-type -Wno-reorder -fdiagnostics-color=auto")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -std=c++17 -Wall -Werror=return-type -Wno-reorder -fdiagnostics-color=auto")
 
 add_executable(test_iitii test_iitii.cc)
 add_dependencies(test_iitii catch)
