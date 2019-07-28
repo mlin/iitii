@@ -1,3 +1,33 @@
+/*
+Implicit Interval Tree with Interpolation Index (iitii)
+
+The user will be interested in two template classes from this file,
+    iit: implicit interval tree, a reimplementation of cgranges by Heng Li
+    iitii: iit + interpolation index, experimental extension to speed up queries on very large
+           datasets
+
+Both classes take the folllowing four template parameters:
+    Pos     :  numeric position type (e.g. uint32_t, double)
+    Item    :  arbitrary type of the items to be indexed
+    get_beg :  a function (const Item& -> Pos) which accesses the interval begin position of item
+    get_end :         "              "                   "                 end          "
+For good performance, get_beg and get_end should just access members of Item (cache-local fetch).
+
+Example:
+
+    int p_get_beg(const std::pair<int,int>& p) { return p.first; }
+    int p_get_end(const std::pair<int,int>& p) { return p.second; }
+
+    using p_iitii = iitii<int, std::pair<int,int>, p_get_beg, p_get_end>;
+    p_iitii db(my_intervals.begin(), my_intervals.end());  // loads from InputIterator
+
+    // query for intervals overlapping [100,200)
+    vector<pair<int,int>> results = db.overlap(100, 200);
+
+This header file has other helper template classes that allow most code to be shared between iit
+and iitii, without burdening the former with a lot of the latter's extra baggage.
+*/
+
 #include <vector>
 #include <limits>
 #include <algorithm>
@@ -6,14 +36,9 @@
 // Base template for the internal representation of a node within an implicit interval tree
 // User should not care about this; subclass instantiations may add more members for more-
 // exotically augmented classes of implicit interval trees
-template<
-    typename Pos,              // numeric position type (e.g. uint32_t, double)
-    typename Item,             // arbitrary type of items to be indexed
-    Pos get_beg(const Item&),  // function to get interval begin position from item
-    Pos get_end(const Item&)   // function to get interval end position from item
->   // get_beg & get_end should just access members of Item (i.e. cache-local fetch)
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 struct iit_node_base {
-    static const Pos npos = std::numeric_limits<Pos>::max();    // reserved constant for invalid Pos
+    static const Pos npos = std::numeric_limits<Pos>::max();  // reserved constant for invalid Pos
 
     Item item;
     Pos inside_max_end;   // max end of this & subtree (as in textbook augmented interval tree)
@@ -37,8 +62,9 @@ struct iit_node_base {
     }
 };
 
-// Base template for an implicit interval tree, with internal repr Node<Pos, Item, ...>
-// Users should not use this directly, but instantiate iit (below) or other subclasses
+// Base template for an implicit interval tree, with internal repr
+//     Node<Pos, Item, ...> : iit_node_base<Pos, Item, ...>
+// User should not deal with this directly, but instantiate sub-templates iit or iiitii (below)
 template<typename Pos, typename Item, typename Node>
 class iit_base {
 protected:
@@ -46,11 +72,11 @@ protected:
     typedef std::size_t Rank;   // rank of a node, its index in the sorted array (or beyond, if dark)
     typedef std::size_t Level;  // level in tree
 
-    static const Rank nrank = std::numeric_limits<Rank>::max();
+    static const Rank nrank = std::numeric_limits<Rank>::max();  // invalid Rank
 
     std::vector<Node> nodes;  // array of Nodes sorted by beginning position
     size_t full_size;         // size of the full binary tree containing the nodes; liable to be
-                              // as large as 2*nodes.size()-1 including implicit "dark" nodes
+                              // as large as 2*nodes.size()-1, including implicit "dark" nodes
 
     Rank root;
     Level root_level;         //  = K in cgranges
@@ -96,6 +122,7 @@ protected:
     }
 
     // top-down overlap scan for [qbeg,qend). return # of nodes visited
+    // recursion depth limited to tree height
     size_t scan(Rank subtree, Pos qbeg, Pos qend, std::vector<Item>& ans) const {
         if (subtree == nrank) {
             return 0;
@@ -106,9 +133,8 @@ protected:
             // to the order in which the binary tree fills up recursively (left, parent, right). So
             // we just need to descend into the left branch, which must eventually lead to real
             // node(s) perhaps via a chain of dark ones.
-            // TODO: there should be a closed formula for the length of this left chain of dark
-            //       nodes given subtree, n.size(), and full_size. or at very least we could
-            //       precompute a lookup table.
+            // TODO: there should be a closed formula for the end of this left chain of dark nodes
+            //       given subtree, n.size(), and full_size
             return 1 + scan(left(subtree), qbeg, qend, ans);
         }
 
@@ -133,7 +159,7 @@ public:
         : root_level(0)
         , root(std::numeric_limits<Rank>::max())
     {
-        // store the items
+        // store the items in our Node wrapper
         std::for_each(first, last, [&](const Item& it) { nodes.push_back(Node(it)); });
 
         // compute the implied tree geometry
@@ -142,7 +168,7 @@ public:
         root = (Rank(1) << root_level) - 1;
 
         if (nodes.size()) {
-            // sort the nodes by interval
+            // sort the nodes by interval beg (then end)
             std::sort(nodes.begin(), nodes.end());
 
             // Memoize the path from the rightmost leaf up to the root. This will trace the border
@@ -196,13 +222,8 @@ public:
     }
 };
 
-// Basic implicit interval tree
-template<
-    typename Pos,              // numeric position type (e.g. uint32_t, double)
-    typename Item,             // arbitrary type of items to be indexed
-    Pos get_beg(const Item&),  // function to get interval begin position from item
-    Pos get_end(const Item&)   // function to get interval end position from item
->   // get_beg & get_end should just access members of Item (i.e. cache-local fetch)
+// Basic implicit interval tree (a reimplementation of cgranges)
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>> {
 public:
     template<typename InputIterator>
@@ -211,10 +232,13 @@ public:
         {}
 };
 
+
+// iitii-specialized node type
 template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
     // Additional augment values for iitii nodes, which help us know when we can stop climbing in
-    // the bottom-up search.
+    // the bottom-up search starting from a leaf to an ancestor node which must contain all query
+    // results beneath it.
     //
     // outside_max_end of node n is the maximum m.end() of all nodes m outside of n & its subtree
     //     with m.beg() < n.beg(); -infinity if there are no such nodes.
@@ -226,7 +250,7 @@ struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
     //  (ii) qend <= n.outside_min_beg
     // By (i), any node outside n & subtree with beg < n's cannot overlap the query. By (ii), any
     // node outside n & subtree with beg >= n's cannot overlap the query. This exhausts all nodes
-    // outside of n & subtree, so we don't need to climb past n.
+    // outside of n & subtree, so we need not climb past n.
     Pos outside_max_end;
     Pos outside_min_beg;
 
@@ -237,6 +261,7 @@ struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
         {}
 };
 
+// here it is
 template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>> {
     using Node = iitii_node<Pos, Item, get_beg, get_end>;
@@ -327,8 +352,7 @@ public:
                 Rank l = leftmost_child(n), r = rightmost_child(n);
 
                 // outside_min_beg is beg() of the node ranked one higher than n's rightmost child
-                node.outside_min_beg = r < nodes.size()-1 ? nodes[r+1].beg()
-                                                          : std::numeric_limits<Pos>::max();
+                node.outside_min_beg = r < nodes.size()-1 ? nodes[r+1].beg() : Node::npos;
                 if (l>0) {
                     if (nodes[l-1].beg() == node.beg()) {
                         // corner case: nodes to the left of n's subtree can have the same beg as n
@@ -366,12 +390,9 @@ public:
         size_t climb_cost = 0;
 
         // climb until our necessary & sufficient criteria are met, or the root
-        while (subtree != root) {
-            if (subtree < nodes.size() &&
-                nodes[subtree].outside_max_end <= qbeg &&
-                qend <= nodes[subtree].outside_min_beg) {
-                break;
-            }
+        while (subtree != root && (subtree >= nodes.size() ||
+                                    qbeg < nodes[subtree].outside_max_end ||
+                                    nodes[subtree].outside_min_beg < qend)) {
             subtree = parent(subtree);
             // TODO: scheme to skip through chains of dark nodes along the border
             ++climb_cost;

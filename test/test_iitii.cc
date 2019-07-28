@@ -82,29 +82,25 @@ TEST_CASE("dark nodes (N=5) with iitii") {
 TEST_CASE("fuzz") {
     default_random_engine R(42);
 
-    // generate random intervals with beg ~ begD and length ~ lenD
     uniform_int_distribution<uint32_t> begD(1, 420000);
     geometric_distribution<uint16_t> lenD(0.01);
-
-    // also spike in a bunch of intervals starting at a few selected positions, since colliding beg
-    // positions trigger certain obscure code paths
-    vector<uint32_t> spike_positions = {100, 1000, 10000, 100000, 420000};
+    const vector<uint32_t> spike_positions = {100, 1000, 10000, 100000, 420000};
 
     for (int N = 3; N < 2000000; N *= 3) {  // base != 2 provides varying tree fullness patterns
-        const size_t Q = 1000; // # queries on for each N
-        size_t results = 0, cost = 0, costii = 0;
-
+        // generate random intervals with beg ~ begD and length ~ lenD
         vector<pospair> examples;
         for (int i = 0; i < N; ++i) {
             auto beg = begD(R);
             examples.push_back({ beg, beg+lenD(R) });
         }
-
+        // also spike in a bunch of intervals starting at a few selected positions, since colliding
+        // beg positions trigger certain corner cases
         for (int i = 0; i < N/10; ++i) {
             auto beg = spike_positions[i % spike_positions.size()];
             examples.push_back({ beg, beg+lenD(R) });
         }
 
+        // build trees
         auto tree = build_iit(examples);
         auto treeii = build_iitii(examples);
 
@@ -116,6 +112,9 @@ TEST_CASE("fuzz") {
             return begl < begr;
         });
 
+        // run random queries and check that the result sets are correct
+        const size_t Q = 1000;
+        size_t results = 0, cost = 0, costii = 0;
         for (size_t i = 0; i < Q; ++i) {
             auto qbeg = begD(R);
             auto qend = qbeg + 42;
