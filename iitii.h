@@ -315,6 +315,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         w[1] = float(m);
         w[0] = float(mean_halfrank - m*mean_beg);
         assert(w[0] == w[0] && w[1] == w[1]);
+        // std::cout << "rank/2 ~ " << w[1] << "*beg + " << w[0] << std::endl;
     }
 
     inline Rank leftmost_child(Rank subtree) const {
@@ -385,11 +386,12 @@ public:
 
     size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const override {
         // ask model which leaf we should begin our bottom-up climb at
-        Rank subtree = predict_leaf(qbeg);
-        assert(level(subtree) == 0);
-        size_t climb_cost = 0;
+        Rank prediction = predict_leaf(qbeg);
+        assert(level(prediction) == 0);
 
         // climb until our necessary & sufficient criteria are met, or the root
+        size_t climb_cost = 0;
+        Rank subtree = prediction;
         while (subtree != root && (subtree >= nodes.size() ||
                                     qbeg < nodes[subtree].outside_max_end ||
                                     nodes[subtree].outside_min_beg < qend)) {
@@ -398,10 +400,17 @@ public:
             ++climb_cost;
         }
 
+        auto self = const_cast<iitii<Pos, Item, get_beg, get_end>*>(this);  // getting around const
+        self->queries++;
+        self->rank_error += prediction >= subtree ? prediction-subtree : subtree-prediction;
+
         // scan the subtree for query results 
         ans.clear();
         return super::scan(subtree, qbeg, qend, ans) + climb_cost;
     }
+
+    size_t queries = 0;
+    size_t rank_error = 0;
 
     using super::overlap;
 };

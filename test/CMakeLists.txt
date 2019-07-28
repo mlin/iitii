@@ -11,6 +11,40 @@ project(iitii)
 INCLUDE(ExternalProject)
 include_directories(${PROJECT_SOURCE_DIR}/..)
 
+# After build, double-check external/src/htslib-stamp/htslib-build-out.log
+# to make sure CFLAGS were set as expected
+ExternalProject_Add(htslib
+    URL https://github.com/samtools/htslib/releases/download/1.9/htslib-1.9.tar.bz2
+    PREFIX ${CMAKE_CURRENT_BINARY_DIR}/external
+    CONFIGURE_COMMAND ""
+    PATCH_COMMAND sed -i "s/^CFLAGS .*$/CFLAGS = -gdwarf -O3 -DNDEBUG/" Makefile
+    BUILD_IN_SOURCE 1
+    BUILD_COMMAND bash -c "make -n && make -j$(nproc)"
+    INSTALL_COMMAND ""
+    LOG_DOWNLOAD ON
+    LOG_BUILD ON
+  )
+ExternalProject_Get_Property(htslib source_dir)
+set(HTSLIB_INCLUDE_DIR ${source_dir}/htslib)
+include_directories(${HTSLIB_INCLUDE_DIR})
+ExternalProject_Get_Property(htslib binary_dir)
+add_library(libhts STATIC IMPORTED)
+set(LIBHTS_A ${binary_dir}/libhts.a)
+set_property(TARGET libhts PROPERTY IMPORTED_LOCATION ${LIBHTS_A})
+
+ExternalProject_Add(CTPL
+    URL https://github.com/vit-vit/CTPL/archive/v.0.0.2.zip
+    PREFIX ${CMAKE_CURRENT_BINARY_DIR}/external
+    CONFIGURE_COMMAND ""
+    BUILD_IN_SOURCE 1
+    BUILD_COMMAND ""
+    INSTALL_COMMAND ""
+    LOG_DOWNLOAD ON
+  )
+ExternalProject_Get_Property(CTPL source_dir)
+set(CTPL_INCLUDE_DIR ${source_dir})
+include_directories(${CTPL_INCLUDE_DIR})
+
 ExternalProject_Add(catch
   URL https://github.com/philsquared/Catch/archive/v2.9.1.zip
   PREFIX ${CMAKE_CURRENT_BINARY_DIR}/external
@@ -25,7 +59,8 @@ include_directories(${source_dir}/single_include)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -std=c++17 -Wall -Werror=return-type -Wno-reorder -fdiagnostics-color=auto")
 
 add_executable(test_iitii test_iitii.cc)
-add_dependencies(test_iitii catch)
+add_dependencies(test_iitii catch libhts)
+target_link_libraries(test_iitii libhts libz.a libbz2.a liblzma.a)
 
 include(CTest)
-add_test(NAME unit_tests COMMAND ./test_iitii -d yes)
+add_test(NAME unit_tests COMMAND bash -c "LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so ./test_iitii -d yes")
