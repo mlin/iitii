@@ -284,36 +284,37 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return r < nsz ? r : (nsz - (2 - nsz%2));
     }
 
-    void train() {
-        // Simple linear regression of rank/2 ~ node.beg() over all the leaf nodes
-        // Sure, let's write it ourselves, that sounds like a great idea =)
-
-        double sum_beg = 0, sum_halfrank = 0;
-        size_t leaf_count = 0;
-        for (Rank rank = 0; rank < nodes.size(); rank += 2) {
-            sum_beg += nodes[rank].beg();
-            sum_halfrank += rank/2;
-            ++leaf_count;
+    // simple linear regression of y ~ x given points [(x,y)], returning (intercept, slope)
+    template<typename xty, typename yty>
+    std::pair<double,double> regress(const std::vector<std::pair<xty,yty>>& points) {
+        if (points.empty()) {
+            return std::make_pair(0.0, 0.0);
         }
-
-        if (leaf_count == 0) {
-            w[0] = w[1] = 0.0f;
-            return;
+        double sum_x, sum_y, cov, var;
+        sum_x = sum_y = cov = var = 0.0;
+        for (const auto& pt : points) {
+            sum_x += double(pt.first);
+            sum_y += double(pt.second);
         }
-
-        const double mean_beg = sum_beg/leaf_count,
-                     mean_halfrank = sum_halfrank/leaf_count;
-
-        double cov = 0, var = 0;
-        for (Rank rank = 0; rank < nodes.size(); rank += 2) {
-            const double beg_err = nodes[rank].beg() - mean_beg;
-            cov += beg_err*(rank/2 - mean_halfrank);
-            var += beg_err*beg_err;
+        const double mean_x = sum_x/points.size(), mean_y = sum_y/points.size();
+        for (const auto& pt : points) {
+            const double x_err = pt.first - mean_x;
+            cov += x_err*(pt.second - mean_y);
+            var += x_err*x_err;
         }
-
         const double m = cov / var;
-        w[1] = float(m);
-        w[0] = float(mean_halfrank - m*mean_beg);
+        return std::make_pair(mean_y - m*mean_x, m);
+    }
+
+    void train() {
+        std::vector<std::pair<Pos,Rank>> points;
+        for (Rank rank = 0; rank < nodes.size(); rank += 2) {
+            points.push_back(std::make_pair(nodes[rank].beg(), rank/2));
+        }
+
+        auto weights = regress<Pos,Rank>(points);
+        w[0] = weights.first;
+        w[1] = weights.second;
         assert(w[0] == w[0] && w[1] == w[1]);
         // std::cout << "rank/2 ~ " << w[1] << "*beg + " << w[0] << std::endl;
     }
