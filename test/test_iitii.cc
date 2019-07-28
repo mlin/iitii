@@ -29,8 +29,8 @@ auto build_iit(const vector<pospair>& examples) {
     return iit<pos, pospair, &get_beg, &get_end>(examples.begin(), examples.end());
 }
 
-auto build_iitii(const vector<pospair>& examples) {
-    return iitii<pos, pospair, &get_beg, &get_end>(examples.begin(), examples.end());
+auto build_iitii(const vector<pospair>& examples, size_t domains) {
+    return iitii<pos, pospair, &get_beg, &get_end>(examples.begin(), examples.end(), domains);
 }
 
 TEST_CASE("cgranges example") {
@@ -43,7 +43,7 @@ TEST_CASE("cgranges example") {
 }
 
 TEST_CASE("cgranges example with iitii") {
-    auto tree = build_iitii({ { 12, 34 }, { 0, 23 }, { 34, 56 } });
+    auto tree = build_iitii({ { 12, 34 }, { 0, 23 }, { 34, 56 } }, 1);
 
     auto results = tree.overlap(22, 25);
     REQUIRE(results.size() == 2);
@@ -74,7 +74,7 @@ TEST_CASE("dark nodes (N=5)") {
 
 TEST_CASE("dark nodes (N=5) with iitii") {
     vector<pospair> examples = { { 0, 7 }, {1, 2}, {2, 4}, {3, 6}, {4, 9} };
-    auto tree = build_iitii(examples);
+    auto tree = build_iitii(examples, 1);
 
     auto results = tree.overlap(6, 10);
     REQUIRE(results.size() == 2);
@@ -108,7 +108,7 @@ TEST_CASE("fuzz") {
 
         // build trees
         auto tree = build_iit(examples);
-        auto treeii = build_iitii(examples);
+        auto treeii = build_iitii(examples, N >= 100 ? 10 : 1);
 
         std::sort(examples.begin(), examples.end(), [](const pospair& lhs, const pospair& rhs) {
             auto begl = get_beg(lhs), begr = get_beg(rhs);
@@ -355,7 +355,7 @@ TEST_CASE("gnomAD chr2") {
     const string url = "https://storage.googleapis.com/gnomad-public/release/2.0.2/vcf/genomes/gnomad.genomes.r2.0.2.sites.chr2.vcf.bgz";
 
     ifstream vcf(filename), tbi(filename + ".tbi");
-    if (vcf.bad() || tbi.bad()) {
+    if (!(vcf.good() && tbi.good())) {
         WARN("Skipping test because " + filename + " and .tbi aren't present. Download them to that location from " + url);
     } else {
         auto variants = load_variants_parallel(filename, rid, megabases);
@@ -371,7 +371,7 @@ TEST_CASE("gnomAD chr2") {
         const size_t trials = 10000;
 
         iit<int, variant, variant_beg, variant_end> tree(variants.begin(), variants.end());
-        iitii<int, variant, variant_beg, variant_end> treeii(variants.begin(), variants.end());
+        iitii<int, variant, variant_beg, variant_end> treeii(variants.begin(), variants.end(), 100);
         size_t cost = 0, costii=0, count=0;
         vector<variant> results, resultsii;
 
@@ -392,6 +392,7 @@ TEST_CASE("gnomAD chr2") {
         cout << count << " " << cost << " " << costii << endl;
         cout << "mean absolute error of rank prediction = " << double(treeii.rank_error)/treeii.queries << endl;
 
+        #ifndef NDEBUG
         std::sort(variants.begin(), variants.end(), [](const variant& lhs, const variant& rhs) {
             auto begl = lhs.beg, begr = rhs.beg;
             if (begl == begr) {
@@ -403,5 +404,6 @@ TEST_CASE("gnomAD chr2") {
         for (const auto& vt : variants) {
             variants_txt << vt.str() << endl;
         }
+        #endif
     }
 }

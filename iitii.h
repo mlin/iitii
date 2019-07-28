@@ -261,6 +261,32 @@ struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
         {}
 };
 
+// simple linear regression of y ~ x given points [(x,y)], returning (intercept, slope)
+template<typename XT, typename YT>
+std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
+    if (points.empty()) {
+        return std::make_pair(0.0, 0.0);
+    }
+    double sum_x, sum_y, cov, var;
+    sum_x = sum_y = cov = var = 0.0;
+    for (const auto& pt : points) {
+        sum_x += double(pt.first);
+        sum_y += double(pt.second);
+    }
+    const double mean_x = sum_x/points.size(), mean_y = sum_y/points.size();
+    for (const auto& pt : points) {
+        const double x_err = pt.first - mean_x;
+        cov += x_err*(pt.second - mean_y);
+        var += x_err*x_err;
+    }
+    if (var == 0.0) {
+        return std::make_pair(mean_y, 0.0);
+    }
+    const double m = cov / var;
+    return std::make_pair(mean_y - m*mean_x, m);
+}
+
+
 // here it is
 template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>> {
@@ -272,51 +298,53 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     using super::full_size, super::nrank;
     using super::level, super::root, super::root_level;
 
-    // Model to predict the rank of the closest leaf for a given begin position.
-    // The leaves are the even-ranked nodes, so we regress using rank/2 and then double the
-    // prediction: 2*floor(w[1]*qbeg + w[0])
-    float w[2] = { 0.0f, 0.0f };
+
+    // Leaf prediction model: the (max_beg-min_beg) range is partitioned into a number of domains,
+    // each domain covering an equal-sized portion of that range. For each domain d we keep a
+    // linear model of leaf rank on beg position, rank ~ w[d,0] + w[d,1]*beg.
+    // As a detail, the leaves are the even-ranked nodes, so we have the models predict rank/2 and
+    // then double the floored prediction.
+    unsigned domains;
+    Pos domain_size = Node::npos;
+    std::vector<float> weights;  // domains*2
+    Pos min_beg = std::numeric_limits<Pos>::max();
+
+    inline unsigned which_domain(Pos beg) const {
+        if (beg < min_beg) {
+            return 0;
+        }
+        return std::min(domains-1, unsigned((beg-min_beg)/domain_size));
+    }
+
+    // Given qbeg, select domain and predict rank from the respective model
     Rank predict_leaf(Pos qbeg) const {
-        float halfrank = w[1]*float(qbeg) + w[0];
+        auto which = which_domain(qbeg);
+        assert(which < domains);
+
+        float halfrank = weights[2*which] + weights[2*which+1]*float(qbeg);
         assert(halfrank == halfrank);
+
         Rank r = 2*Rank(std::max(0.0f,halfrank));
         const auto nsz = nodes.size();
         return r < nsz ? r : (nsz - (2 - nsz%2));
     }
 
-    // simple linear regression of y ~ x given points [(x,y)], returning (intercept, slope)
-    template<typename xty, typename yty>
-    std::pair<double,double> regress(const std::vector<std::pair<xty,yty>>& points) {
-        if (points.empty()) {
-            return std::make_pair(0.0, 0.0);
-        }
-        double sum_x, sum_y, cov, var;
-        sum_x = sum_y = cov = var = 0.0;
-        for (const auto& pt : points) {
-            sum_x += double(pt.first);
-            sum_y += double(pt.second);
-        }
-        const double mean_x = sum_x/points.size(), mean_y = sum_y/points.size();
-        for (const auto& pt : points) {
-            const double x_err = pt.first - mean_x;
-            cov += x_err*(pt.second - mean_y);
-            var += x_err*x_err;
-        }
-        const double m = cov / var;
-        return std::make_pair(mean_y - m*mean_x, m);
-    }
-
     void train() {
-        std::vector<std::pair<Pos,Rank>> points;
-        for (Rank rank = 0; rank < nodes.size(); rank += 2) {
-            points.push_back(std::make_pair(nodes[rank].beg(), rank/2));
+        std::vector<std::vector<std::pair<Pos,Rank>>> points;
+        points.resize(domains);
+        // partition all the nodes into their respective domains & record training points
+        for (Rank r = 0; r < nodes.size(); r+=2) {
+            points.at(which_domain(nodes[r].beg()))
+                    .push_back(std::make_pair(nodes[r].beg(), r/2));
         }
-
-        auto weights = regress<Pos,Rank>(points);
-        w[0] = weights.first;
-        w[1] = weights.second;
-        assert(w[0] == w[0] && w[1] == w[1]);
-        // std::cout << "rank/2 ~ " << w[1] << "*beg + " << w[0] << std::endl;
+        // train each domain-specific model
+        for (unsigned which = 0; which < domains; ++which) {
+            auto w = regress<Pos,Rank>(points[which]);
+            weights[2*which] = w.first;
+            weights[2*which+1] = w.second;
+            // std::cout << "which = " << which << " points = " << points[which].size()
+            //           << " b = " << w.first << " m = " << w.second << std::endl;
+        }
     }
 
     inline Rank leftmost_child(Rank subtree) const {
@@ -335,10 +363,18 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
 
 public:
     template<typename InputIterator>
-    iitii(InputIterator first, InputIterator last)
+    iitii(InputIterator first, InputIterator last, unsigned domains_ = 1)
         : super(first, last)
+        , domains(std::max(1U,domains_))
+        , domain_size(std::numeric_limits<Pos>::max())
     {
+        weights.resize(domains*2, 0.0f);
+
         if (nodes.size()) {
+            // equal size (in Pos units) of each domain
+            min_beg = nodes[0].beg();
+            domain_size = 1 + (nodes.back().beg()-min_beg)/domains;
+
             // compute running max_end along the sorted array, which we'll look up while computing
             // outside_max_end below
             std::vector<Pos> running_max_end { nodes[0].end() };
@@ -380,7 +416,7 @@ public:
                 assert(node.outside_min_beg >= node.beg());
             }
 
-            // train the model for leaf rank ~ beg
+            // train the rank prediction models
             train();
         }
     }
