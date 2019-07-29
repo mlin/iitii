@@ -400,7 +400,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return subtree + ofs;
     }
 
-    iitii(std::vector<Node>& nodes_, unsigned domains_ = 1)
+    iitii(std::vector<Node>& nodes_, unsigned domains_)
         : super(nodes_)
         , domains(std::max(1U,domains_))
         , domain_size(std::numeric_limits<Pos>::max())
@@ -460,6 +460,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     }
 
 public:
+    // iitii::builder::build() takes a size_t argument giving the number of domains to model
     using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node>;
     friend builder;
 
@@ -471,9 +472,10 @@ public:
         // climb until our necessary & sufficient criteria are met, or the root
         size_t climb_cost = 0;
         Rank subtree = prediction;
-        while (subtree != root && (subtree >= nodes.size() ||
-                                    qbeg < nodes[subtree].outside_max_end ||
-                                    nodes[subtree].outside_min_beg < qend)) {
+        while (subtree != root &&                           // stop at root
+                (subtree >= nodes.size() ||                 // continue climb through imaginary
+                 qbeg < nodes[subtree].outside_max_end ||   // possible outside overlap from left
+                 nodes[subtree].outside_min_beg < qend)) {  // possible outside overlap from right
             subtree = parent(subtree);
             // TODO: scheme to skip through chains of imaginary nodes along the border
             ++climb_cost;

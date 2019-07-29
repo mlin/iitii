@@ -4,7 +4,7 @@
 #include <chrono>
 #include <functional>
 
-size_t milliseconds_to(function<void()> f) {
+uint32_t milliseconds_to(function<void()> f) {
     chrono::steady_clock::time_point begin = chrono::steady_clock::now();
     f();
     chrono::steady_clock::time_point end = chrono::steady_clock::now();
@@ -12,11 +12,12 @@ size_t milliseconds_to(function<void()> f) {
 }
 
 template <class tree>
-size_t run_queries(const vector<variant>& variants, const tree& t, int max_end, int queries) {
+size_t run_queries(const vector<variant>& variants, const tree& t, int max_end, int queries, size_t& cost) {
     default_random_engine R(42);
     uniform_int_distribution<uint32_t> begD(0, max_end);
     uniform_int_distribution<size_t> vtD(0, variants.size()-1);
     size_t ans = 0;
+    cost = 0;
     for (int i = 0; i < queries; i++) {
         // 50% queries for the interval of a random existing variant (results will include itself)
         // and 50% for 10bp intervals with a uniform random begin position
@@ -27,10 +28,30 @@ size_t run_queries(const vector<variant>& variants, const tree& t, int max_end, 
             qbeg = vt.beg;
             qend = vt.end;
         }
-        auto results = t.overlap(qbeg, qend);
+        vector<variant> results;
+        cost += t.overlap(qbeg, qend, results);
         ans += results.size();
     }
     return ans;
+}
+
+template <class tree, typename... Args>
+size_t run_experiment(const vector<variant>& variants, const int max_end, const size_t N,
+                     uint32_t& build_ms, uint32_t& queries_ms, size_t& cost, Args&&... args) {
+    vector<variant> variants2(variants.begin(), variants.begin()+N);
+    unique_ptr<tree> ptree;
+    build_ms = milliseconds_to([&](){
+        auto t = typename tree::builder(variants2.begin(), variants2.end()).build(forward<Args>(args)...);
+        ptree.reset(new tree(move(t)));
+    });
+
+    cost = 0;
+    size_t result_count = 0;
+    queries_ms = milliseconds_to([&](){
+        result_count = run_queries<tree>(variants, *ptree, max_end, 10000000, cost);
+    });
+
+    return result_count;
 }
 
 int main(int argc, char** argv) {
@@ -60,32 +81,21 @@ int main(int argc, char** argv) {
     cerr << "Loaded " << variants.size() << " variants, max END = " << max_end
          << ", max rlen = " << max_len << endl;
 
-    unique_ptr<variant_iit> tree;
-    cout << "milliseconds to build iit: " << milliseconds_to([&](){
-        auto t = variant_iit::builder(variants.begin(), variants.end()).build();
-        tree.reset(new variant_iit(move(t)));
-    }) << endl;
-
-    unique_ptr<variant_iitii> treeii;
-    cout << "milliseconds to build iitii: "  << milliseconds_to([&](){
-        // configure iitii with one interpolation domain per 100kbp
-        auto t = variant_iitii::builder(variants.begin(), variants.end()).build(megabases*10);
-        treeii.reset(new variant_iitii(move(t)));
-    }) << endl;
-
-    const size_t trials = 10000000;
-    size_t result_count = 0;
-    cout << "milliseconds for iit queries: " << milliseconds_to([&](){
-        result_count = run_queries<variant_iit>(variants, *tree, max_end, trials);
-    }) << endl;
-
-    cout << "milliseconds for iitii queries: " << milliseconds_to([&](){
-        if (run_queries<variant_iitii>(variants, *treeii, max_end, trials) != result_count) {
-            throw runtime_error("PANIC: result sets differed!");
+    cout << "#tree_type\tnum_variants\tbuild_ms\tqueries_ms\tqueries_cost\tmodel_domains" << endl;
+    for(size_t N = variants.size(); N >= 100000; N /= 4) {
+        uint32_t build_ms, queries_ms;
+        size_t cost;
+        size_t result_count = run_experiment<variant_iit>(variants, max_end, N, build_ms, queries_ms, cost);
+        cout << "iit\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t0" << endl;
+        for (unsigned domains = 1; domains <= 10000; domains *= 10) {
+            if (result_count != run_experiment<variant_iitii>(variants, max_end, N, build_ms, queries_ms, cost, domains)) {
+                throw runtime_error("RED ALERT: inconsistent results");
+            }
+            cout << "iitii\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t" << domains << endl;
         }
-    }) << endl;
+    }
 
-    cout << "mean climbing per iitii query: " << double(treeii->total_climb_cost)/treeii->queries << endl;
+    //cout << "mean climbing per iitii query: " << double(treeii->total_climb_cost)/treeii->queries << endl;
 
     return 0;
 }
