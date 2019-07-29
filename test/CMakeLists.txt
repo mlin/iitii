@@ -58,7 +58,7 @@ include_directories(${source_dir}/single_include)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -std=c++17 -Wall -Werror=return-type -Wno-reorder -fdiagnostics-color=auto")
 
-add_executable(test_iitii test_iitii.cc)
+add_executable(test_iitii util.h test_iitii.cc)
 add_dependencies(test_iitii catch libhts)
 target_link_libraries(test_iitii libhts libz.a libbz2.a liblzma.a)
 
