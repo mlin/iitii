@@ -1,7 +1,7 @@
 /*
 Implicit Interval Tree with Interpolation Index (iitii)
 
-The user will be interested in two template classes from this file,
+This file provides two template classes,
     iit: implicit interval tree, a reimplementation of cgranges by Heng Li
     iitii: iit + interpolation index, experimental extension to speed up queries on very large
            datasets
@@ -32,7 +32,8 @@ Alternatively items may be streamed into the builder:
     auto db = builder.build();
 
 This header file has other helper template classes that allow most code to be shared between iit
-and iitii (without burdening the former with baggage from the latter)
+and iitii (without burdening the former with baggage from the latter). The template structure has
+gotten a little out of hand, as they're wont to do.
 */
 
 #include <vector>
@@ -76,14 +77,15 @@ template<typename Pos, typename Item, typename Node>
 class iit_base {
 protected:
     // aliases to help keep the Pos, Rank, and Level concepts straight
-    typedef std::size_t Rank;   // rank of a node, its index in the sorted array (or beyond, if dark)
+    typedef std::size_t Rank;   // rank of a node, its index in the sorted array (or beyond, if
+                                //                                                imaginary)
     typedef std::size_t Level;  // level in tree
 
     static const Rank nrank = std::numeric_limits<Rank>::max();  // invalid Rank
 
     std::vector<Node> nodes;  // array of Nodes sorted by beginning position
     size_t full_size;         // size of the full binary tree containing the nodes; liable to be
-                              // as large as 2*nodes.size()-1, including implicit "dark" nodes
+                              // as large as 2*nodes.size()-1, including imaginary nodes.
 
     Rank root;
     Level root_level;         //  = K in cgranges
@@ -136,12 +138,10 @@ protected:
         }
         assert(subtree < full_size);
         if (subtree >= nodes.size()) {
-            // When we arrive at a dark node, its right subtree must also be completely dark, owing
-            // to the order in which the binary tree fills up recursively (left, parent, right). So
-            // we just need to descend into the left branch, which must eventually lead to real
-            // node(s) perhaps via a chain of dark ones.
-            // TODO: there should be a closed formula for the end of this left chain of dark nodes
-            //       given subtree, n.size(), and full_size
+            // When we arrive at an imaginary node, its right subtree must be all imaginary, so we
+            // only need to descend left.
+            // TODO: should be able to work out a closed formula for the next real node we'll find,
+            //       given subtree, n.size(), and full_size.
             return 1 + scan(left(subtree), qbeg, qend, ans);
         }
 
@@ -176,10 +176,10 @@ public:
             std::sort(nodes.begin(), nodes.end());
 
             // Memoize the path from the rightmost leaf up to the root. This will trace the border
-            // between the nodes present and dark nodes (if any), which we'll refer to in indexing
-            // below. Some of these border nodes may be dark.
+            // between the real and imaginary nodes (if any), which we'll refer to in indexing
+            // below. Some of these border nodes may be imaginary.
             std::vector<Rank> right_border_nodes({
-                nodes.size() - (2 - nodes.size() % 2)  // rightmost leaf in nodes (not dark)
+                nodes.size() - (2 - nodes.size() % 2)  // rightmost real leaf
             });
             while (right_border_nodes.back() != root) {
                 right_border_nodes.push_back(parent(right_border_nodes.back()));
@@ -197,14 +197,14 @@ public:
                     if (right(n) < nodes.size()) {
                         ime = std::max(ime, nodes[right(n)].inside_max_end);
                     } else {
-                        // right child is dark; take the last border observation
+                        // right child is imaginary; take the last border observation
                         ime = std::max(ime, right_border_ime);
                     }
                     assert(ime != Node::npos);
                     nodes[n].inside_max_end = ime;
 
                     if (n == right_border_nodes[lv]) {
-                        // track inside_max_end of the non-dark nodes on the border
+                        // track inside_max_end of the real nodes on the border
                         right_border_ime = ime;
                     }
                 }
@@ -471,7 +471,7 @@ public:
                                     qbeg < nodes[subtree].outside_max_end ||
                                     nodes[subtree].outside_min_beg < qend)) {
             subtree = parent(subtree);
-            // TODO: scheme to skip through chains of dark nodes along the border
+            // TODO: scheme to skip through chains of imaginary nodes along the border
             ++climb_cost;
         }
 
