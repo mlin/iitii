@@ -31,9 +31,13 @@ Alternatively items may be streamed into the builder:
     builder.add(pair2);
     auto db = builder.build();
 
+Building iitii works the same way, except build() takes a size_t argument giving the number of
+model domains.
+
 This header file has other helper template classes that allow most code to be shared between iit
-and iitii (without burdening the former with baggage from the latter). The template structure has
-gotten a little out of hand, as they're wont to do.
+and iitii (without burdening the former with baggage from the latter -- important for fair
+comparative benchmarking). The template structure has gotten a little out of hand, which always
+seems to happen.
 */
 
 #include <vector>
