@@ -62,5 +62,9 @@ add_executable(test_iitii util.h test_iitii.cc)
 add_dependencies(test_iitii catch libhts)
 target_link_libraries(test_iitii libhts libz.a libbz2.a liblzma.a)
 
+add_executable(gnomad_benchmark util.h gnomad_benchmark.cc)
+add_dependencies(gnomad_benchmark libhts)
+target_link_libraries(gnomad_benchmark libhts libz.a libbz2.a liblzma.a)
+
 include(CTest)
 add_test(NAME unit_tests COMMAND bash -c "LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so ./test_iitii -d yes")

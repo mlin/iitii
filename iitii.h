@@ -111,10 +111,11 @@ protected:
         Level lv = level(node);
         Rank ofs = Rank(1) << lv;
         assert(node >= ofs-1);
-        if (((node>>(lv+1)) & 1)) {
+        if (((node>>(lv+1)) & 1)) {  // node is right child
             assert(node >= ofs);
             return node-ofs;
         }
+        // node is left child
         return node+ofs;
     }
 
@@ -337,8 +338,10 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     // Leaf prediction model: the (max_beg-min_beg) range is partitioned into a number of domains,
     // each domain covering an equal-sized portion of that range. For each domain d we keep a
     // linear model of leaf rank on beg position, rank ~ w[d,0] + w[d,1]*beg.
+    // Given query qbeg, selecting the domain and predicting the rank should take constant time.
     // As a detail, the leaves are the even-ranked nodes, so we have the models predict rank/2 and
     // then double the floored prediction.
+    // TODO: think about predicting internal nodes instead of leaves
     unsigned domains;
     Pos domain_size = Node::npos;
     std::vector<float> weights;  // domains*2
@@ -352,6 +355,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     }
 
     // Given qbeg, select domain and predict rank from the respective model
+    // TODO: try using middle of qbeg & qend
     Rank predict_leaf(Pos qbeg) const {
         auto which = which_domain(qbeg);
         assert(which < domains);
@@ -477,7 +481,7 @@ public:
 
         auto self = const_cast<iitii<Pos, Item, get_beg, get_end>*>(this);  // getting around const
         self->queries++;
-        self->rank_error += prediction >= subtree ? prediction-subtree : subtree-prediction;
+        self->total_climb_cost += climb_cost;
 
         // scan the subtree for query results 
         ans.clear();
@@ -485,7 +489,7 @@ public:
     }
 
     size_t queries = 0;
-    size_t rank_error = 0;
+    size_t total_climb_cost = 0;
 
     using super::overlap;
 };

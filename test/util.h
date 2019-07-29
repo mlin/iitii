@@ -194,3 +194,6 @@ vector<variant> load_variants_parallel(const string& filename, int rid, int mega
 
     return ans;
 }
+
+using variant_iit = iit<int, variant, variant_beg, variant_end>;
+using variant_iitii = iitii<int, variant, variant_beg, variant_end>;

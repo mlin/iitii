@@ -159,7 +159,7 @@ TEST_CASE("fuzz") {
 TEST_CASE("gnomAD chr2") {
     const int rid = 0;
     #ifdef NDEBUG
-    const int megabases = 240;
+    const int megabases = 244;
     #else
     const int megabases = 24;
     #endif
@@ -180,10 +180,10 @@ TEST_CASE("gnomAD chr2") {
 
         default_random_engine R(42);
         uniform_int_distribution<uint32_t> begD(0, max_end);
-        const size_t trials = 10000;
+        const size_t trials = 1000000;
 
         auto tree = iit<int, variant, variant_beg, variant_end>::builder(variants.begin(), variants.end()).build();
-        auto treeii = iitii<int, variant, variant_beg, variant_end>::builder(variants.begin(), variants.end()).build(100);
+        auto treeii = iitii<int, variant, variant_beg, variant_end>::builder(variants.begin(), variants.end()).build(megabases*10);
         size_t cost = 0, costii=0, count=0;
         vector<variant> results, resultsii;
 
@@ -202,7 +202,7 @@ TEST_CASE("gnomAD chr2") {
         }
 
         cout << count << " " << cost << " " << costii << endl;
-        cout << "mean absolute error of rank prediction = " << double(treeii.rank_error)/treeii.queries << endl;
+        cout << "mean climbing per query = " << double(treeii.total_climb_cost)/treeii.queries << endl;
 
         #ifndef NDEBUG
         std::sort(variants.begin(), variants.end(), [](const variant& lhs, const variant& rhs) {
