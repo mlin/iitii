@@ -36,20 +36,25 @@ size_t run_queries(const vector<variant>& variants, const tree& t, int max_end, 
 }
 
 template <class tree, typename... Args>
-size_t run_experiment(const vector<variant>& variants, const int max_end, const size_t N,
-                     uint32_t& build_ms, uint32_t& queries_ms, size_t& cost, Args&&... args) {
-    vector<variant> variants2(variants.begin(), variants.begin()+N);
+size_t run_experiment(const vector<variant>& variants, const size_t N,
+                      uint32_t& build_ms, uint32_t& queries_ms, size_t& cost, Args&&... args) {
+    vector<variant> variantsN(variants.begin(), variants.begin()+N);
+    int max_end = -1;
+    for (const auto& vt : variantsN) {
+        max_end = std::max(max_end, vt.end);
+    }
     unique_ptr<tree> ptree;
     build_ms = milliseconds_to([&](){
-        auto t = typename tree::builder(variants2.begin(), variants2.end()).build(forward<Args>(args)...);
+        auto t = typename tree::builder(variantsN.begin(), variantsN.end()).build(forward<Args>(args)...);
         ptree.reset(new tree(move(t)));
     });
 
     cost = 0;
     size_t result_count = 0;
     queries_ms = milliseconds_to([&](){
-        result_count = run_queries<tree>(variants, *ptree, max_end, 10000000, cost);
+        result_count = run_queries<tree>(variantsN, *ptree, max_end, 10000000, cost);
     });
+    // cout << "mean climbing per iitii query: " << double(ptree->total_climb_cost)/ptree->queries << endl;
 
     return result_count;
 }
@@ -78,24 +83,30 @@ int main(int argc, char** argv) {
         max_len = max(max_len, vt.end - vt.beg);
         max_end = max(max_end, vt.end);
     }
-    cerr << "Loaded " << variants.size() << " variants, max END = " << max_end
+    cerr << variants.size() << " variants, max END = " << max_end
          << ", max rlen = " << max_len << endl;
 
-    cout << "#tree_type\tnum_variants\tbuild_ms\tqueries_ms\tqueries_cost\tmodel_domains" << endl;
-    for(size_t N = variants.size(); N >= 100000; N /= 4) {
+    std::sort(variants.begin(), variants.end(), [](const variant& lhs, const variant& rhs) {
+        auto begl = lhs.beg, begr = rhs.beg;
+        if (begl == begr) {
+            return lhs.end < rhs.end;
+        }
+        return begl < begr;
+    });
+
+    cout << "#tree_type\tnum_variants\tbuild_ms\tqueries_ms\tqueries_cost\tmodel_domains\tresult_count" << endl;
+    for(size_t N = variants.size(); N >= 10000; N /= 4) {
         uint32_t build_ms, queries_ms;
         size_t cost;
-        size_t result_count = run_experiment<variant_iit>(variants, max_end, N, build_ms, queries_ms, cost);
-        cout << "iit\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t0" << endl;
-        for (unsigned domains = 1; domains <= 10000; domains *= 10) {
-            if (result_count != run_experiment<variant_iitii>(variants, max_end, N, build_ms, queries_ms, cost, domains)) {
+        size_t result_count = run_experiment<variant_iit>(variants, N, build_ms, queries_ms, cost);
+        cout << "iit\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t0\t" << result_count << endl;
+        for (unsigned domains = 1; domains <= 4096; domains *= 16) {
+            if (result_count != run_experiment<variant_iitii>(variants, N, build_ms, queries_ms, cost, domains)) {
                 throw runtime_error("RED ALERT: inconsistent results");
             }
-            cout << "iitii\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t" << domains << endl;
+            cout << "iitii\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t" << domains << "\t" << result_count << endl;
         }
     }
-
-    //cout << "mean climbing per iitii query: " << double(treeii->total_climb_cost)/treeii->queries << endl;
 
     return 0;
 }

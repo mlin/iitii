@@ -379,8 +379,14 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         // train each domain-specific model
         for (unsigned which = 0; which < domains; ++which) {
             auto w = regress<Pos,Rank>(points[which]);
-            weights[2*which] = w.first;
-            weights[2*which+1] = w.second;
+            if (w.first || w.second) {
+                weights[2*which] = w.first;
+                weights[2*which+1] = w.second;
+            } else {
+                // if the regression failed, then hard-wire the domain midpoint
+                weights[2*which] = float(which*domain_size+domain_size/2);
+                weights[2*which+1] = 0.0f;
+            }
             // std::cout << "which = " << which << " points = " << points[which].size()
             //           << " b = " << w.first << " m = " << w.second << std::endl;
         }
