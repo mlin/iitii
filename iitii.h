@@ -18,14 +18,21 @@ Example:
     int p_get_beg(const std::pair<int,int>& p) { return p.first; }
     int p_get_end(const std::pair<int,int>& p) { return p.second; }
 
-    using p_iitii = iitii<int, std::pair<int,int>, p_get_beg, p_get_end>;
-    p_iitii db(my_intervals.begin(), my_intervals.end());  // loads from InputIterator
+    using p_iit = iit<int, std::pair<int,int>, p_get_beg, p_get_end>;
+    auto db = p_iit::builder(my_pairs.begin(), my_pairs.end()).build();
 
     // query for intervals overlapping [100,200)
     vector<pair<int,int>> results = db.overlap(100, 200);
 
+Alternatively items may be streamed into the builder:
+
+    auto builder = p_iit::builder();
+    builder.add(pair1);
+    builder.add(pair2);
+    auto db = builder.build();
+
 This header file has other helper template classes that allow most code to be shared between iit
-and iitii, without burdening the former with a lot of the latter's extra baggage.
+and iitii (without burdening the former with baggage from the latter)
 */
 
 #include <vector>
@@ -154,14 +161,11 @@ protected:
     }
 
 public:
-    template<typename InputIterator>
-    iit_base(InputIterator first, InputIterator last)
-        : root_level(0)
+    iit_base(std::vector<Node>& nodes_)
+        : nodes(std::move(nodes_))
+        , root_level(0)
         , root(std::numeric_limits<Rank>::max())
     {
-        // store the items in our Node wrapper
-        std::for_each(first, last, [&](const Item& it) { nodes.push_back(Node(it)); });
-
         // compute the implied tree geometry
         for (root_level = 0, full_size = 0; full_size < nodes.size();
              ++root_level, full_size = (size_t(1)<<(root_level+1)) - 1);
@@ -222,14 +226,46 @@ public:
     }
 };
 
+// template for the builder class exposed by each user-facing class, which takes in items either
+// all at once from InputIterator, or streaming one-by-one
+template<class iitT, typename Item, typename Node>
+class iit_builder_base {
+    std::vector<Node> nodes_;
+
+public:
+    iit_builder_base() = default;
+    template<typename InputIterator>
+    iit_builder_base(InputIterator begin, InputIterator end) {
+        add(begin, end);
+    }
+
+    void add(const Item& it) {
+        nodes_.push_back(Node(it));
+    }
+
+    template<typename InputIterator>
+    void add(InputIterator begin, InputIterator end) {
+        std::for_each(begin, end, [&](const Item& it) { add(it); });
+    }
+
+    template<typename... Args>
+    iitT build(Args&&... args) {
+        return iitT(nodes_, std::forward<Args>(args)...);
+    }
+};
+
 // Basic implicit interval tree (a reimplementation of cgranges)
 template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>> {
-public:
-    template<typename InputIterator>
-    iit(InputIterator first, InputIterator last)
-        : iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>>(first, last)
+    using Node = iit_node_base<Pos, Item, get_beg, get_end>;
+
+    iit(std::vector<Node>& nodes_)
+        : iit_base<Pos, Item, Node>(nodes_)
         {}
+
+public:
+    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node>;
+    friend builder;
 };
 
 
@@ -285,7 +321,6 @@ std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
     const double m = cov / var;
     return std::make_pair(mean_y - m*mean_x, m);
 }
-
 
 // here it is
 template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
@@ -361,10 +396,8 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return subtree + ofs;
     }
 
-public:
-    template<typename InputIterator>
-    iitii(InputIterator first, InputIterator last, unsigned domains_ = 1)
-        : super(first, last)
+    iitii(std::vector<Node>& nodes_, unsigned domains_ = 1)
+        : super(nodes_)
         , domains(std::max(1U,domains_))
         , domain_size(std::numeric_limits<Pos>::max())
     {
@@ -383,8 +416,9 @@ public:
             }
 
             // Fill outside_min_beg and outside_max_end. Neatly, with the cgranges beg-sorted array
-            // and running_max_end, we can find each value independently in constant time (modulo
-            // beg position collisions)
+            // and running_max_end, we can find each value independently in ~constant time.
+            // Precomputing them is still worthwhile for cache locality and dealing with corner
+            // cases arising from beg position collisions.
             for (Rank n = 0; n < nodes.size(); ++n) {
                 Node& node = nodes[n];
                 Rank l = leftmost_child(n), r = rightmost_child(n);
@@ -420,6 +454,10 @@ public:
             train();
         }
     }
+
+public:
+    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node>;
+    friend builder;
 
     size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const override {
         // ask model which leaf we should begin our bottom-up climb at

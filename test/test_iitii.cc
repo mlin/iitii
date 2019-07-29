@@ -26,11 +26,11 @@ pos get_end(const pospair& p) {
 }
 
 auto build_iit(const vector<pospair>& examples) {
-    return iit<pos, pospair, &get_beg, &get_end>(examples.begin(), examples.end());
+    return iit<pos, pospair, &get_beg, &get_end>::builder(examples.begin(), examples.end()).build();
 }
 
 auto build_iitii(const vector<pospair>& examples, size_t domains) {
-    return iitii<pos, pospair, &get_beg, &get_end>(examples.begin(), examples.end(), domains);
+    return iitii<pos, pospair, &get_beg, &get_end>::builder(examples.begin(), examples.end()).build(domains);
 }
 
 TEST_CASE("cgranges example") {
@@ -370,8 +370,8 @@ TEST_CASE("gnomAD chr2") {
         uniform_int_distribution<uint32_t> begD(0, max_end);
         const size_t trials = 10000;
 
-        iit<int, variant, variant_beg, variant_end> tree(variants.begin(), variants.end());
-        iitii<int, variant, variant_beg, variant_end> treeii(variants.begin(), variants.end(), 100);
+        auto tree = iit<int, variant, variant_beg, variant_end>::builder(variants.begin(), variants.end()).build();
+        auto treeii = iitii<int, variant, variant_beg, variant_end>::builder(variants.begin(), variants.end()).build(100);
         size_t cost = 0, costii=0, count=0;
         vector<variant> results, resultsii;
 
