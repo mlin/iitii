@@ -43,6 +43,7 @@ seems to happen.
 #include <vector>
 #include <limits>
 #include <algorithm>
+#include <cmath>
 #include <assert.h>
 
 // Base template for the internal representation of a node within an implicit interval tree
@@ -306,7 +307,8 @@ struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
 template<typename XT, typename YT>
 std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
     if (points.empty()) {
-        return std::make_pair(0.0, 0.0);
+        return std::make_pair(std::numeric_limits<double>::quiet_NaN(),
+                              std::numeric_limits<double>::quiet_NaN());
     }
     double sum_x, sum_y, cov, var;
     sum_x = sum_y = cov = var = 0.0;
@@ -321,10 +323,23 @@ std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
         var += x_err*x_err;
     }
     if (var == 0.0) {
-        return std::make_pair(mean_y, 0.0);
+        return std::make_pair(0.0, 0.0);
     }
     const double m = cov / var;
     return std::make_pair(mean_y - m*mean_x, m);
+}
+
+template<typename XT, typename YT>
+double mean_absolute_residual(const std::vector<std::pair<XT,YT>>& points, double b, double m) {
+    if (points.empty()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    double sr = 0.0;
+    for (const auto& pt : points) {
+        double y = double(pt.second), fx = (m*double(pt.first)+b);
+        sr += y >= fx ? y-fx : fx-y;
+    }
+    return sr/points.size();
 }
 
 // here it is
@@ -359,13 +374,15 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     }
 
     // Given qbeg, select domain and predict rank from the respective model
-    // TODO: try using middle of qbeg & qend
+    // TODO: try using middle of qbeg & qend, or generally "learn" the best offset
     Rank predict_leaf(Pos qbeg) const {
         auto which = which_domain(qbeg);
         assert(which < domains);
 
         float halfrank = weights[2*which] + weights[2*which+1]*float(qbeg);
-        assert(halfrank == halfrank);
+        if (!std::isfinite(halfrank)) {
+            return nrank;
+        }
 
         Rank r = 2*Rank(std::max(0.0f,halfrank));
         const auto nsz = nodes.size();
@@ -383,13 +400,14 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         // train each domain-specific model
         for (unsigned which = 0; which < domains; ++which) {
             auto w = regress<Pos,Rank>(points[which]);
-            if (w.first || w.second) {
-                weights[2*which] = w.first;
-                weights[2*which+1] = w.second;
-            } else {
-                // if the regression failed, then hard-wire the domain midpoint
-                weights[2*which] = float(which*domain_size+domain_size/2);
-                weights[2*which+1] = 0.0f;
+            // Keep the model if the regression succeeded and the mean absolute residual from the
+            // training points is <= 2^(half of tree height). Otherwise we consider the bottom-up
+            // search counterproductive; leaving the respective weights at nan will cause overlap()
+            // to fall back to top-down search from the root.
+            if (std::isfinite(w.first) && std::isfinite(w.second) &&
+                mean_absolute_residual(points[which], w.first, w.second) <= double(1 << (root_level/2))) {
+                weights[2*which] = float(w.first);
+                weights[2*which+1] = float(w.second);
             }
             // std::cout << "which = " << which << " points = " << points[which].size()
             //           << " b = " << w.first << " m = " << w.second << std::endl;
@@ -415,7 +433,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         , domains(std::max(1U,domains_))
         , domain_size(std::numeric_limits<Pos>::max())
     {
-        weights.resize(domains*2, 0.0f);
+        weights.resize(domains*2, std::numeric_limits<float>::quiet_NaN());
 
         if (nodes.size()) {
             // equal size (in Pos units) of each domain
@@ -477,6 +495,10 @@ public:
     size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const override {
         // ask model which leaf we should begin our bottom-up climb at
         Rank prediction = predict_leaf(qbeg);
+        if (prediction == nrank) {
+            // the model did not make a prediction for some reason, so just go to the root
+            return super::overlap(qbeg, qend, ans);
+        }
         assert(level(prediction) == 0);
 
         // climb until our necessary & sufficient criteria are met, or the root
