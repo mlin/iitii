@@ -137,6 +137,7 @@ protected:
 
     // top-down overlap scan for [qbeg,qend). return # of nodes visited
     // recursion depth limited to tree height
+    // TODO: nip&tuck optimizations (eliminate recursion, unroll traversal of low levels, etc.)
     size_t scan(Rank subtree, Pos qbeg, Pos qend, std::vector<Item>& ans) const {
         if (subtree == nrank) {
             return 0;
