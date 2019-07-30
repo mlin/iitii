@@ -94,17 +94,17 @@ int main(int argc, char** argv) {
         return begl < begr;
     });
 
-    cout << "#tree_type\tnum_variants\tbuild_ms\tqueries_ms\tqueries_cost\tmodel_domains\tresult_count" << endl;
+    cout << "#tree_type\tnum_variants\tbuild_ms\tqueries_ms\tqueries_cost\tresult_count" << endl;
     for(size_t N = variants.size(); N >= 10000; N /= 4) {
         uint32_t build_ms, queries_ms;
         size_t cost;
         size_t result_count = run_experiment<variant_iit>(variants, N, build_ms, queries_ms, cost);
-        cout << "iit\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t0\t" << result_count << endl;
+        cout << "iit\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t" << result_count << endl;
         for (unsigned domains = 1; domains <= 4096; domains *= 16) {
             if (result_count != run_experiment<variant_iitii>(variants, N, build_ms, queries_ms, cost, domains)) {
                 throw runtime_error("RED ALERT: inconsistent results");
             }
-            cout << "iitii\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t" << domains << "\t" << result_count << endl;
+            cout << "iitii(" << domains << ")\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t" << result_count << endl;
         }
     }
 
