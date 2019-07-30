@@ -3,6 +3,8 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <chrono>
+#include <functional>
 #include <assert.h>
 #include "kstring.h"
 #include "tbx.h"
@@ -93,6 +95,13 @@ public:
         assert(!valid_ || str_.s);
     }
 };
+
+uint32_t milliseconds_to(function<void()> f) {
+    chrono::steady_clock::time_point begin = chrono::steady_clock::now();
+    f();
+    chrono::steady_clock::time_point end = chrono::steady_clock::now();
+    return chrono::duration_cast<chrono::milliseconds>(end - begin).count();
+}
 
 // iit Item for testing with VCF variants
 struct variant {

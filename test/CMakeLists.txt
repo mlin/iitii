@@ -62,6 +62,10 @@ add_executable(test_iitii util.h test_iitii.cc)
 add_dependencies(test_iitii catch libhts)
 target_link_libraries(test_iitii libhts libz.a libbz2.a liblzma.a)
 
+add_executable(dumb_benchmark util.h dumb_benchmark.cc)
+add_dependencies(dumb_benchmark libhts)
+target_link_libraries(dumb_benchmark libhts libz.a libbz2.a liblzma.a)
+
 add_executable(gnomad_benchmark util.h gnomad_benchmark.cc)
 add_dependencies(gnomad_benchmark libhts)
 target_link_libraries(gnomad_benchmark libhts libz.a libbz2.a liblzma.a)

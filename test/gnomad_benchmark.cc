@@ -1,15 +1,6 @@
 #include "util.h"
 #include <fstream>
 #include <random>
-#include <chrono>
-#include <functional>
-
-uint32_t milliseconds_to(function<void()> f) {
-    chrono::steady_clock::time_point begin = chrono::steady_clock::now();
-    f();
-    chrono::steady_clock::time_point end = chrono::steady_clock::now();
-    return chrono::duration_cast<chrono::milliseconds>(end - begin).count();
-}
 
 template <class tree>
 size_t run_queries(const vector<variant>& variants, const tree& t, int max_end, int queries, size_t& cost) {
@@ -94,13 +85,13 @@ int main(int argc, char** argv) {
         return begl < begr;
     });
 
-    cout << "#tree_type\tnum_variants\tbuild_ms\tqueries_ms\tqueries_cost\tresult_count" << endl;
+    cout << "#tree_type\tN\tbuild_ms\tqueries_ms\tqueries_cost\tresult_count" << endl;
     for(size_t N = variants.size(); N >= 10000; N /= 4) {
         uint32_t build_ms, queries_ms;
         size_t cost;
         size_t result_count = run_experiment<variant_iit>(variants, N, build_ms, queries_ms, cost);
         cout << "iit\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t" << result_count << endl;
-        for (unsigned domains = 1; domains <= 4096; domains *= 16) {
+        for (unsigned domains = 1; domains <= 65536; domains *= 16) {
             if (result_count != run_experiment<variant_iitii>(variants, N, build_ms, queries_ms, cost, domains)) {
                 throw runtime_error("RED ALERT: inconsistent results");
             }
