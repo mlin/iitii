@@ -15,21 +15,20 @@ For good performance, get_beg and get_end should just access members of Item (ca
 
 Example:
 
-    int p_get_beg(const std::pair<int,int>& p) { return p.first; }
-    int p_get_end(const std::pair<int,int>& p) { return p.second; }
+    using intpair = std::pair<int,int>;
+    int p_get_beg(const intpair& p) { return p.first; }
+    int p_get_end(const intpair& p) { return p.second; }
+    using p_iit = iit<int, intpair, p_get_beg, p_get_end>; // first arg is position type
 
-    using p_iit = iit<int, std::pair<int,int>, p_get_beg, p_get_end>;
-    auto db = p_iit::builder(my_pairs.begin(), my_pairs.end()).build();
+    p_iit::builder br;
+    br.add(intpair(12,34));
+    br.add(intpair(0,23));
+    br.add(intpair(34,56));
+    p_iit db = br.build();
+    // alternative: p_iit db = p_iit::builder(container.begin(), container.end()).build();
 
-    // query for intervals overlapping [100,200)
-    vector<pair<int,int>> results = db.overlap(100, 200);
-
-Alternatively items may be streamed into the builder:
-
-    auto builder = p_iit::builder();
-    builder.add(pair1);
-    builder.add(pair2);
-    auto db = builder.build();
+    std::vector<intpair> results = db.overlap(22, 25);
+    // alternative: db.overlap(22, 25, results);
 
 Building iitii works the same way, except build() takes a size_t argument giving the number of
 model domains.
@@ -347,11 +346,17 @@ template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(cons
 class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>> {
     using Node = iitii_node<Pos, Item, get_beg, get_end>;
     using super = iit_base<Pos, Item, Node>;
-    using typename super::Rank, typename super::Level;
-    using super::left, super::right, super::parent;
+    using typename super::Rank;
+    using typename super::Level;
+    using super::left;
+    using super::right;
+    using super::parent;
     using super::nodes;
-    using super::full_size, super::nrank;
-    using super::level, super::root, super::root_level;
+    using super::full_size;
+    using super::nrank;
+    using super::level;
+    using super::root;
+    using super::root_level;
 
 
     // Leaf prediction model: the (max_beg-min_beg) range is partitioned into a number of domains,

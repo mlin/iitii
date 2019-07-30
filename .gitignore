@@ -43,3 +43,4 @@ test/Makefile
 test/test_iitii
 test/gnomad_benchmark
 test/variants.txt
+example
