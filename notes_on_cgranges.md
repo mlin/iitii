@@ -56,6 +56,8 @@ Notice that each parent node in the sorted array is flanked by its left and righ
 
 In cgranges, the implicit tree layout is determined solely by the *number* of sorted items indexed, otherwise independent of their actual interval positions. This causes at least two complications. First, given a node with interval begin position B, other nodes with that same begin B can exist in *either or both* of its subtrees, even if its *immediate* children have different begin positions. Its parent or any other relatives could potentially share B as well: just work backwards from the extreme where the whole "sorted" array has the same begin. This can be a thorn for various tree algorithms, although it ends up not really affecting cgranges itself.
 
+* Items with colliding begin positions are contiguous in the flat sorted array, so it's much easier to find them there than by tree traversal; just scan items adjacent to the node of interest. Rank calculations can then distinguish whether they're inside or outside the node's subtree based on the rank difference. The iitii code has examples.
+
 The other tricky complication...
 
 ### Imaginary nodes
