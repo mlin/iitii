@@ -323,7 +323,8 @@ std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
         var += x_err*x_err;
     }
     if (var == 0.0) {
-        return std::make_pair(0.0, 0.0);
+        return std::make_pair(std::numeric_limits<double>::quiet_NaN(),
+                              std::numeric_limits<double>::quiet_NaN());
     }
     const double m = cov / var;
     return std::make_pair(mean_y - m*mean_x, m);
@@ -472,13 +473,8 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
 
                     // outside_max_end is the running_max_end of the highest-ranked node ranked
                     // below n's leftmost child & has beg strictly below n's
-                    Rank leq = l-1;
-                    while (nodes[leq].beg() == node.beg()) {
-                        if (leq == 0) {
-                            break;
-                        }
-                        --leq;
-                    }
+                    Rank leq;
+                    for (leq = l-1; leq > 0 && nodes[leq].beg() == node.beg(); --leq);
                     assert(nodes[leq].beg() <= node.beg());
                     node.outside_max_end = nodes[leq].beg() < node.beg()
                                                 ? running_max_end[leq]
