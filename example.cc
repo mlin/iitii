@@ -6,7 +6,7 @@
 using intpair = std::pair<int,int>;
 int p_get_beg(const intpair& p) { return p.first; }
 int p_get_end(const intpair& p) { return p.second; }
-using p_iitii = iitii<int, intpair, p_get_beg, p_get_end>;  // first arg is position type
+using p_iitii = iitii::iitii<int, intpair, p_get_beg, p_get_end>;  // first arg is position type
 
 int main() {
     p_iitii::builder br;

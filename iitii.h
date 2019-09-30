@@ -45,6 +45,8 @@ seems to happen.
 #include <cmath>
 #include <assert.h>
 
+namespace iitii {
+
 // Base template for the internal representation of a node within an implicit interval tree
 // User should not care about this; subclass instantiations may add more members for more-
 // exotically augmented classes of implicit interval trees
@@ -533,3 +535,5 @@ public:
 
     using super::overlap;
 };
+
+}
