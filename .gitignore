@@ -1,46 +1,7 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-.vscode
-
-# CMake
-CMakeCache.txt
-CMakeFiles
-test/Testing
-test/*.cmake
-test/DartConfiguration.tcl
-test/external
-test/Makefile
-test/test_iitii
-test/gnomad_benchmark
-test/variants.txt
-example
+\#*
+.#*
+*~
+build/
+bin/
+test/
+.gdb_history
