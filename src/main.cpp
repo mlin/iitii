@@ -41,6 +41,7 @@ int main(int argc, char** argv) {
     assert(args::get(max_val));
     
     std::remove(args::get(test_file).c_str());
+    //p_iitii::builder bb = p_iitii::builder(args::get(test_file));
     p_iitii::builder bb = p_iitii::builder(args::get(test_file));
 
     //bb.add(intpair(12,34));
@@ -65,6 +66,7 @@ int main(int argc, char** argv) {
     //tree.index();
     uint64_t n_domains = std::max((uint64_t)1, (uint64_t)args::get(domains));
     p_iitii db = bb.build(n_domains);
+    //p_iitii db = bb.build();
 //#pragma omp parallel for
     for (int n=0; n<max_value; ++n) {
         std::vector<intpair> ovlp = db.overlap(n, n+1);

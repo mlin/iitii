@@ -87,11 +87,12 @@ ExternalProject_Get_property(tayweeargs SOURCE_DIR)
 set(tayweeargs_INCLUDE "${SOURCE_DIR}")
 
 ExternalProject_Add(mmap_allocator
-  GIT_REPOSITORY "https://github.com/johannesthoma/mmap_allocator.git"
-  GIT_TAG "6081a92a3b0f36156b5102f7c7071b2b6da1afe0"
+  GIT_REPOSITORY "https://github.com/ekg/mmap_allocator.git"
+  GIT_TAG "ed61daf094de1c2e1adbe8306287ad52da5f0264"
+  BUILD_IN_SOURCE TRUE
   UPDATE_COMMAND ""
   INSTALL_COMMAND ""
-  BUILD_COMMAND ""
+  BUILD_COMMAND "make"
   CONFIGURE_COMMAND "")
 ExternalProject_Get_property(mmap_allocator SOURCE_DIR)
 set(mmap_allocator_INCLUDE "${SOURCE_DIR}")
@@ -101,7 +102,6 @@ set(CMAKE_BUILD_TYPE Debug)
 # set up our target executable and specify its dependencies and includes
 add_executable(iitii
   ${CMAKE_SOURCE_DIR}/src/main.cpp
-  ${mmap_allocator_INCLUDE}/mmap_file_pool.cpp
   )
 add_dependencies(iitii ips4o tayweeargs mmap_allocator)
 target_include_directories(iitii PUBLIC
@@ -111,6 +111,7 @@ target_include_directories(iitii PUBLIC
   "${tayweeargs_INCLUDE}")
 
 target_link_libraries(iitii
+  "${mmap_allocator_INCLUDE}/libmmap_allocator.a"
   "-latomic")
   
 if (APPLE)

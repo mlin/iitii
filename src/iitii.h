@@ -402,6 +402,7 @@ public:
         }
         assert(stats.st_size % sizeof(Node) == 0); // must be even records
         size_t count = stats.st_size / sizeof(Node);
+        close(fd);
         return count;
     }
 
