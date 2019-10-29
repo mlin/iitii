@@ -234,6 +234,10 @@ public:
         }
     }
 
+    ~iit_base(void) {
+        nodes.munmap_file();
+    }
+
     // overlap query; fill ans and return query cost (number of tree nodes visited)
     virtual size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const {
         ans.clear();
