@@ -105,6 +105,7 @@ protected:
     static const Rank nrank = std::numeric_limits<Rank>::max();  // invalid Rank
 
     mmappable_vector<Node> nodes;  // array of Nodes sorted by beginning position
+    std::string backing_filename;  // the filename backing this mmappable_vector
     size_t full_size;         // size of the full binary tree containing the nodes; liable to be
                               // as large as 2*nodes.size()-1, including imaginary nodes.
 
@@ -184,8 +185,9 @@ protected:
     }
 
 public:
-    iit_base(mmappable_vector<Node>& nodes_)
+    iit_base(mmappable_vector<Node>& nodes_, const std::string& filename)
         : nodes(std::move(nodes_))
+        , backing_filename(filename)
         , root_level(0)
         , root(std::numeric_limits<Rank>::max())
     {
@@ -236,6 +238,7 @@ public:
 
     ~iit_base(void) {
         nodes.munmap_file();
+        std::remove(backing_filename.c_str());
     }
 
     // overlap query; fill ans and return query cost (number of tree nodes visited)
@@ -450,7 +453,7 @@ public:
         sync_and_close_parallel_writers();
         mmappable_vector<Node> nodes_;
         nodes_.mmap_file(filename.c_str(), READ_WRITE_SHARED, 0, record_count());
-        return iitT(nodes_, std::forward<Args>(args)...);
+        return iitT(nodes_, filename, std::forward<Args>(args)...);
     }
 };
 
@@ -628,8 +631,8 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return subtree + ofs;
     }
 
-    iitii(mmappable_vector<Node>& nodes_, unsigned domains_)
-        : super(nodes_)
+    iitii(mmappable_vector<Node>& nodes_, const std::string& filename, unsigned domains_)
+        : super(nodes_, filename)
         , domains(std::max(1U,domains_))
         , domain_size(std::numeric_limits<Pos>::max())
     {
