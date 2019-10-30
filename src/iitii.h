@@ -462,8 +462,8 @@ template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(cons
 class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>> {
     using Node = iit_node_base<Pos, Item, get_beg, get_end>;
 
-    iit(mmappable_vector<Node>& nodes_)
-        : iit_base<Pos, Item, Node>(nodes_)
+    iit(mmappable_vector<Node>& nodes_, const std::string& file)
+        : iit_base<Pos, Item, Node>(nodes_, file)
         {}
 
 public:
