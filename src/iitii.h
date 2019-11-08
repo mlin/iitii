@@ -43,7 +43,24 @@ seems to happen.
 #include <limits>
 #include <algorithm>
 #include <cmath>
-#include <assert.h>
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <fcntl.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cassert>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include "ips4o.hpp"
+#include "mmappable_vector.h"
+
+namespace iitii {
+
+using namespace mmap_allocator_namespace;
 
 // Base template for the internal representation of a node within an implicit interval tree
 // User should not care about this; subclass instantiations may add more members for more-
@@ -87,7 +104,8 @@ protected:
 
     static const Rank nrank = std::numeric_limits<Rank>::max();  // invalid Rank
 
-    std::vector<Node> nodes;  // array of Nodes sorted by beginning position
+    mmappable_vector<Node> nodes;  // array of Nodes sorted by beginning position
+    std::string backing_filename;  // the filename backing this mmappable_vector
     size_t full_size;         // size of the full binary tree containing the nodes; liable to be
                               // as large as 2*nodes.size()-1, including imaginary nodes.
 
@@ -167,8 +185,9 @@ protected:
     }
 
 public:
-    iit_base(std::vector<Node>& nodes_)
+    iit_base(mmappable_vector<Node>& nodes_, const std::string& filename)
         : nodes(std::move(nodes_))
+        , backing_filename(filename)
         , root_level(0)
         , root(std::numeric_limits<Rank>::max())
     {
@@ -179,8 +198,7 @@ public:
 
         if (nodes.size()) {
             // sort the nodes by interval beg (then end)
-            std::sort(nodes.begin(), nodes.end());
-
+            ips4o::parallel::sort(nodes.begin(), nodes.end());
             // Memoize the path from the rightmost leaf up to the root. This will trace the border
             // between the real and imaginary nodes (if any), which we'll refer to in indexing
             // below. Some of these border nodes may be imaginary.
@@ -218,6 +236,11 @@ public:
         }
     }
 
+    ~iit_base(void) {
+        nodes.munmap_file();
+        std::remove(backing_filename.c_str());
+    }
+
     // overlap query; fill ans and return query cost (number of tree nodes visited)
     virtual size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const {
         ans.clear();
@@ -236,7 +259,7 @@ public:
 // all at once from InputIterator, or streaming one-by-one
 template<class iitT, typename Item, typename Node>
 class iit_builder_base {
-    std::vector<Node> nodes_;
+    mmappable_vector<Node> nodes_;
 
 public:
     iit_builder_base() = default;
@@ -260,17 +283,191 @@ public:
     }
 };
 
+// template for the memory-mapped builder class exposed by each user-facing class, which takes in items either
+// all at once from InputIterator, or streaming one-by-one
+template<class iitT, typename Item, typename Node>
+class iit_mm_builder_base {
+    //mmappable_vector<Node> nodes_;
+
+    int get_thread_count(void) {
+        int thread_count = 1;
+#pragma omp parallel
+        {
+#pragma omp master
+            thread_count = omp_get_num_threads();
+        }
+        return thread_count;
+    }
+
+    std::ofstream writer;
+    std::vector<std::ofstream> writers;
+    char* reader = nullptr;
+    int reader_fd = 0;
+    std::string filename;
+    std::string index_filename;
+    bool sorted = false;
+    // key information
+    uint64_t n_records = 0;
+    bool indexed = false;
+    uint32_t OUTPUT_VERSION = 1; // update as we change our format
+
+public:
+    iit_mm_builder_base() = default;
+    template<typename InputIterator>
+        iit_mm_builder_base(const std::string& f, InputIterator begin, InputIterator end)
+        : filename(f) {
+        open_writers(f);
+        add(begin, end);
+    }
+
+    iit_mm_builder_base(const std::string& f) : filename(f) { open_writers(f); }
+
+    //~iit_mm_builder_base(void) { close_writers(); }
+
+    void set_base_filename(const std::string& f) {
+        filename = f;
+    }
+
+    // close/open backing file
+    void open_main_writer(void) {
+        if (writer.is_open()) {
+            writer.seekp(0, std::ios_base::end); // seek to the end for appending
+            return;
+        }
+        assert(!filename.empty());
+        writer.open(filename.c_str(), std::ios::binary | std::ios::trunc);
+        if (writer.fail()) {
+            throw std::ios_base::failure(std::strerror(errno));
+        }
+    }
+
+    // per-thread writers
+    void open_writers(const std::string& f) {
+        set_base_filename(f);
+        open_writers();
+    }
+
+    void open_writers(void) {
+        assert(!filename.empty());
+        writers.clear();
+        writers.resize(get_thread_count());
+        for (size_t i = 0; i < writers.size(); ++i) {
+            auto& writer = writers[i];
+            writer.open(writer_filename(i), std::ios::binary | std::ios::app);
+            if (writer.fail()) {
+                throw std::ios_base::failure(std::strerror(errno));
+            }
+        }
+    }
+
+    std::string writer_filename(size_t i) {
+        std::stringstream wf;
+        wf << filename << ".tmp_write" << "." << i;
+        return wf.str();
+    }
+
+    std::ofstream& get_writer(void) {
+        return writers[omp_get_thread_num()];
+    }
+
+    void sync_and_close_parallel_writers(void) {
+        // check to see if we ran single-threaded
+        uint64_t used_writers = 0;
+        uint64_t writer_that_wrote = 0;
+        for (size_t i = 0; i < writers.size(); ++i) {
+            writers[i].close();
+            if (filesize(writer_filename(i).c_str())) {
+                ++used_writers;
+                writer_that_wrote = i;
+            }
+        }
+        bool single_threaded = used_writers == 1;
+        // close the temp writers and cat them onto the end of the main file
+        if (single_threaded) {
+            std::rename(writer_filename(writer_that_wrote).c_str(), filename.c_str());
+            for (size_t i = 0; i < writers.size(); ++i) {
+                if (i != writer_that_wrote) {
+                    std::remove(writer_filename(i).c_str());
+                }
+            }
+        } else {
+            open_main_writer();
+            for (size_t i = 0; i < writers.size(); ++i) {
+                std::ifstream if_w(writer_filename(i), std::ios_base::binary);
+                writer << if_w.rdbuf();
+                if_w.close();
+                std::remove(writer_filename(i).c_str());
+            }
+        }
+        writers.clear();
+        writer.close();
+        for (size_t i = 0; i < writers.size(); ++i) {
+            std::remove(writer_filename(i).c_str());
+        }
+    }
+
+    /// return the number of records, which will only work after indexing
+    size_t size(void) const {
+        return n_records;
+    }
+
+    /// return the backing buffer
+    char* get_buffer(void) const {
+        return reader;
+    }
+
+    /// get the record count
+    size_t record_count(void) {
+        int fd = open(filename.c_str(), O_RDWR);
+        if (fd == -1) {
+            assert(false);
+        }
+        struct stat stats;
+        if (-1 == fstat(fd, &stats)) {
+            assert(false);
+        }
+        assert(stats.st_size % sizeof(Node) == 0); // must be even records
+        size_t count = stats.st_size / sizeof(Node);
+        close(fd);
+        return count;
+    }
+
+    std::ifstream::pos_type filesize(const char* filename) {
+        std::ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
+        return in.tellg();
+    }
+
+    void add(const Item& it) {
+        auto v = Node(it);
+        auto& writer = get_writer();
+        writer.write((char*)&v, sizeof(Node));
+    }
+
+    template<typename InputIterator>
+    void add(InputIterator begin, InputIterator end) {
+        std::for_each(begin, end, [&](const Item& it) { add(it); });
+    }
+
+    template<typename... Args>
+    iitT build(Args&&... args) {
+        sync_and_close_parallel_writers();
+        mmappable_vector<Node> nodes_;
+        nodes_.mmap_file(filename.c_str(), READ_WRITE_SHARED, 0, record_count());
+        return iitT(nodes_, filename, std::forward<Args>(args)...);
+    }
+};
+
 // Basic implicit interval tree (a reimplementation of cgranges)
 template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>> {
     using Node = iit_node_base<Pos, Item, get_beg, get_end>;
 
-    iit(std::vector<Node>& nodes_)
-        : iit_base<Pos, Item, Node>(nodes_)
+    iit(mmappable_vector<Node>& nodes_, const std::string& file)
+        : iit_base<Pos, Item, Node>(nodes_, file)
         {}
 
 public:
-    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node>;
+    using builder = iit_mm_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node>;
     friend builder;
 };
 
@@ -434,8 +631,8 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return subtree + ofs;
     }
 
-    iitii(std::vector<Node>& nodes_, unsigned domains_)
-        : super(nodes_)
+    iitii(mmappable_vector<Node>& nodes_, const std::string& filename, unsigned domains_)
+        : super(nodes_, filename)
         , domains(std::max(1U,domains_))
         , domain_size(std::numeric_limits<Pos>::max())
     {
@@ -495,7 +692,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
 
 public:
     // iitii::builder::build() takes a size_t argument giving the number of domains to model
-    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node>;
+    using builder = iit_mm_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node>;
     friend builder;
 
     size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const override {
@@ -533,3 +730,5 @@ public:
 
     using super::overlap;
 };
+
+}
