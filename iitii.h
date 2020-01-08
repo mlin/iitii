@@ -278,14 +278,17 @@ public:
 // iitii-specialized node type
 template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
-    // Additional augment values for iitii nodes, which help us know when we can stop climbing in
-    // the bottom-up search starting from a leaf to an ancestor node which must contain all query
-    // results beneath it.
-    //
+    // Additional augment value for iitii nodes, which helps us prove when we can stop climbing in
+    // the bottom-up search for a subtree root which must contain all query results beneath it.
+    Pos outside_max_end;
     // outside_max_end of node n is the maximum m.end() of all nodes m outside of n & its subtree
     //     with m.beg() < n.beg(); -infinity if there are no such nodes.
+    //
+    // Furthermore,
     // outside_min_beg of node n is the minimum m.beg() of all nodes m outside of n & its subtree
     //     with m.beg() >= n.beg(); infinity if there are no such nodes.
+    // But we don't need to store outside_min_beg, because we can compute it in constant time using
+    // rank offsets in the beg-sorted node array.
     //
     // Suppose during a query for [qbeg, qend) we climb up to a node n with,
     //   (i) n.outside_max_end <= qbeg; AND
@@ -293,13 +296,10 @@ struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
     // By (i), any node outside n & subtree with beg < n's cannot overlap the query. By (ii), any
     // node outside n & subtree with beg >= n's cannot overlap the query. This exhausts all nodes
     // outside of n & subtree, so we need not climb past n.
-    Pos outside_max_end;
-    Pos outside_min_beg;
 
     iitii_node(const Item& item_)
         : iit_node_base<Pos, Item, get_beg, get_end>(item_)
         , outside_max_end(std::numeric_limits<Pos>::min())
-        , outside_min_beg(std::numeric_limits<Pos>::max())
         {}
 };
 
@@ -434,6 +434,20 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return subtree + ofs;
     }
 
+    inline Pos outside_min_beg(Rank subtree) const {
+        // constant-time computation of outside_min_beg: beg() of the node ranked one higher than
+        // subtree's rightmost child
+        const Pos beg = nodes[subtree].beg();
+        const Rank l = leftmost_child(subtree);
+        if (l && nodes[l-1].beg() == beg) {
+            // corner case: nodes to the left of the subtree can have the same beg as subroot
+            // and outside_min_beg is defined on nodes with beg >= subroot's.
+            return beg;
+        }
+        const Rank r = rightmost_child(subtree);
+        return r < nodes.size()-1 ? nodes[r+1].beg() : std::numeric_limits<Pos>::max();
+    }
+
     iitii(std::vector<Node>& nodes_, unsigned domains_)
         : super(nodes_)
         , domains(std::max(1U,domains_))
@@ -453,23 +467,12 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
                 running_max_end.push_back(std::max(running_max_end[n-1], nodes[n].end()));
             }
 
-            // Fill outside_min_beg and outside_max_end. Neatly, with the cgranges beg-sorted array
-            // and running_max_end, we can find each value independently in ~constant time.
-            // Precomputing them is still worthwhile for cache locality and dealing with corner
-            // cases arising from beg position collisions.
+            // fill outside_max_end
             for (Rank n = 0; n < nodes.size(); ++n) {
                 Node& node = nodes[n];
-                Rank l = leftmost_child(n), r = rightmost_child(n);
+                Rank l = leftmost_child(n);
 
-                // outside_min_beg is beg() of the node ranked one higher than n's rightmost child
-                node.outside_min_beg = r < nodes.size()-1 ? nodes[r+1].beg() : Node::npos;
                 if (l>0) {
-                    if (nodes[l-1].beg() == node.beg()) {
-                        // corner case: nodes to the left of n's subtree can have the same beg as n
-                        // and outside_min_beg is defined on nodes with beg >= n's.
-                        node.outside_min_beg = node.beg();
-                    }
-
                     // outside_max_end is the running_max_end of the highest-ranked node ranked
                     // below n's leftmost child & has beg strictly below n's
                     Rank leq = l-1;
@@ -484,8 +487,6 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
                                                 ? running_max_end[leq]
                                                 : std::numeric_limits<Pos>::min();
                 }
-
-                assert(node.outside_min_beg >= node.beg());
             }
 
             // train the rank prediction models
@@ -513,7 +514,7 @@ public:
         while (subtree != root &&                           // stop at root
                 (subtree >= nodes.size() ||                 // continue climb through imaginary
                  qbeg < nodes[subtree].outside_max_end ||   // possible outside overlap from left
-                 nodes[subtree].outside_min_beg < qend)) {  // possible outside overlap from right
+                 outside_min_beg(subtree) < qend)) {        // possible outside overlap from right
             subtree = parent(subtree);
             // TODO: scheme to skip through chains of imaginary nodes along the border
             ++climb_cost;
