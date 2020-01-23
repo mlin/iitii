@@ -360,16 +360,24 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     using super::root_level;
 
 
-    // Leaf prediction model: the (max_beg-min_beg) range is partitioned into a number of domains,
-    // each domain covering an equal-sized portion of that range. For each domain d we keep a
-    // linear model of leaf rank on beg position, rank ~ w[d,0] + w[d,1]*beg.
-    // Given query qbeg, selecting the domain and predicting the rank should take constant time.
-    // As a detail, the leaves are the even-ranked nodes, so we have the models predict rank/2 and
-    // then double the floored prediction.
-    // TODO: think about predicting internal nodes instead of leaves
-    unsigned domains;
+    // Rank prediction model: the (max_beg-min_beg) range is partitioned into a number of domains
+    // C, each domain covering an equal-sized portion of that range. The domain pertaining to a
+    // position beg is d(beg) = floor((beg-min_beg)*C/(max_beg-min_beg)), bounded to [0,C).
+    //
+    // For each domain d, we store three parameters: a Level l[d] ∈ [0,root_level] into which we
+    // will jump, and linear weights w[d,0] and w[d,1] for the regression of the offset within
+    // level l[d] on position:
+    //   ofs_l(beg) ~ w[d(beg),0] + w[d(beg),1]*beg
+    // So ofs_l = 0 refers to the leftmost node on level l[d], ofs_l = 1 refers to the node to its
+    // right on level l[d] and so on.
+    //
+    // Given the (rounded and bounded) offset, the rank of the corresponding node in the array is:
+    //   rank(beg) = 2^{l[d(beg)]}*(2*ofs_l(beg)+1)-1
+
+    unsigned domains; // C
     Pos domain_size = Node::npos;
-    std::vector<float> weights;  // domains*2
+    std::vector<float> parameters;  // C rows of three parameters (row-major storage): w[0,d],
+                                    // w[1,d] and l[d]. NB: the third is a Level stored as a float.
     Pos min_beg = std::numeric_limits<Pos>::max();
 
     inline unsigned which_domain(Pos beg) const {
@@ -380,28 +388,38 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     }
 
     // Given qbeg, select domain and predict rank from the respective model
-    // TODO: try using middle of qbeg & qend, or generally "learn" the best offset
     Rank predict_leaf(Pos qbeg) const {
         auto which = which_domain(qbeg);
         assert(which < domains);
 
-        float halfrank = weights[2*which] + weights[2*which+1]*float(qbeg);
-        if (!std::isfinite(halfrank)) {
+        const float lv_f = parameters[3*which+2];
+        if (!std::isfinite(lv_f)) {
             return nrank;
         }
+        assert(lv_f >= 0 && lv_f <= root_level);
+        const Level lv = (Level) lv_f;
 
-        Rank r = 2*Rank(std::max(0.0f,halfrank));
+        const float ofs_f = parameters[3*which] + parameters[3*which+1]*float(qbeg);
+        assert(std::isfinite(ofs_f));
+        const size_t ofs = size_t(std::max(0.0f, roundf(ofs_f)));
+
+        Rank r = (size_t(1)<<lv)*(2*ofs+1)-1;
+        assert(r >= nodes.size() || level(r) == lv);
+
+        // detail: if rank is imaginary (off-scale high), start from rightmost real leaf
         const auto nsz = nodes.size();
         return r < nsz ? r : (nsz - (2 - nsz%2));
     }
 
-    void train() {
+    void train(Level lv = 0) {
         std::vector<std::vector<std::pair<Pos,Rank>>> points;
         points.resize(domains);
         // partition all the nodes into their respective domains & record training points
-        for (Rank r = 0; r < nodes.size(); r+=2) {
+        const size_t step = size_t(1)<<(lv+1);
+        for (Rank r = (size_t(1)<<lv)-1, ofs = 0; r < nodes.size(); r+=step, ++ofs) {
+            assert(level(r) == lv);
             points.at(which_domain(nodes[r].beg()))
-                    .push_back(std::make_pair(nodes[r].beg(), r/2));
+                    .push_back(std::make_pair(nodes[r].beg(), ofs));
         }
         // train each domain-specific model
         for (unsigned which = 0; which < domains; ++which) {
@@ -412,8 +430,9 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
             // to fall back to top-down search from the root.
             if (std::isfinite(w.first) && std::isfinite(w.second) &&
                 mean_absolute_residual(points[which], w.first, w.second) <= double(1 << (root_level/2))) {
-                weights[2*which] = float(w.first);
-                weights[2*which+1] = float(w.second);
+                parameters[3*which] = float(w.first);
+                parameters[3*which+1] = float(w.second);
+                parameters[3*which+2] = float(lv);
             }
             // std::cout << "which = " << which << " points = " << points[which].size()
             //           << " b = " << w.first << " m = " << w.second << std::endl;
@@ -453,7 +472,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         , domains(std::max(1U,domains_))
         , domain_size(std::numeric_limits<Pos>::max())
     {
-        weights.resize(domains*2, std::numeric_limits<float>::quiet_NaN());
+        parameters.resize(domains*3, std::numeric_limits<float>::quiet_NaN());
 
         if (nodes.size()) {
             // equal size (in Pos units) of each domain
