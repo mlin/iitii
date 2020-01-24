@@ -378,6 +378,8 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     // For each domain d, we store three parameters: a Level l[d] ∈ [0,root_level] into which we
     // will jump, and linear weights w[d,0] and w[d,1] for the regression of LevelRank on Pos,
     //   lr(beg) ~ w[d(beg),0] + w[d(beg),1]*beg
+    //
+    // Then, jump to the node: rank_of_levelrank(l[d(beg)], lr(beg))
 
     unsigned domains; // C
     Pos domain_size = Node::npos;
@@ -412,28 +414,27 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         // train each domain-specific model
         for (unsigned domain = 0; domain < domains; ++domain) {
             // partition the domain points by tree level, converting Ranks to LevelRanks
-            std::vector<std::vector<std::pair<Pos,Rank>>> points_by_level(root_level+1);
+            std::vector<std::vector<std::pair<Pos,LevelRank>>> points_by_level(root_level+1);
             for (const auto& p : points[domain]) {
                 Level lv = level(p.second);
                 points_by_level.at(lv)
                                .push_back(std::make_pair(p.first, levelrank_of_rank(p.second)));
             }
-            points[domain].clear(); // free a little memory
             // for each level, regress its points, calculate cost function, and record parameters
-            // of lowest-cost level
+            // if the cost is better than previous levels.
             double lowest_cost = std::numeric_limits<double>::quiet_NaN();
-            for (Level lv = 0; lv <= root_level; ++lv) {
+            for (Level lv = 0; lv < root_level; ++lv) {
                 auto w = regress<Pos,LevelRank>(points_by_level[lv]);
                 if (std::isfinite(w.first) && std::isfinite(w.second)) {
                     double cost = 0.0;
-                    for (const auto& p : points_by_level[lv]) {
+                    for (const auto& p : points[domain]) {
                         Rank fb = predict_in_domain(lv, float(w.first), float(w.second), p.first);
-                        double error = double(levelrank_of_rank(fb)) - double(p.second);
-                        double error_penalty = 2.0*log2(1+abs(error));
+                        double error = fabs(double(fb) - double(p.second))/double(size_t(1)<<lv);
+                        double error_penalty = error > 1.0 ? 2.0*log2(1+error) : 0.0;
                         double overlap_penalty = nodes[fb].outside_max_end > p.first ? root_level-lv : 0;
                         cost += lv + std::max(error_penalty, overlap_penalty);
                     }
-                    cost /= points_by_level[lv].size();
+                    cost /= points[domain].size();
                     assert(std::isfinite(cost) && cost >= 0.0);
                     if (cost < root_level && (!std::isfinite(lowest_cost) || cost < lowest_cost)) {
                         lowest_cost = cost;
@@ -444,7 +445,11 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
                     }
                 }
             }
-            //std::cout << "domain = " << domain << " level = " << Level(parameters[3*domain+2]) << std::endl;
+            points[domain].clear(); // free a little memory
+            /*
+            std::cout << "domain = " << domain << " level = " << Level(parameters[3*domain+2]) 
+                      << " cost = " << lowest_cost << std::endl;
+            */
         }
     }
 
