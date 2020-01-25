@@ -204,7 +204,7 @@ TEST_CASE("gnomAD chr2") {
         cout << count << " " << cost << " " << costii << endl;
         cout << "mean climbing per query = " << double(treeii.total_climb_cost)/treeii.queries << endl;
 
-        #ifdef NDEBUG
+        /*
         std::sort(variants.begin(), variants.end(), [](const variant& lhs, const variant& rhs) {
             auto begl = lhs.beg, begr = rhs.beg;
             if (begl == begr) {
@@ -216,6 +216,6 @@ TEST_CASE("gnomAD chr2") {
         for (const auto& vt : variants) {
             variants_txt << vt.str() << endl;
         }
-        #endif
+        */
     }
 }

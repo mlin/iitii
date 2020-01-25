@@ -359,115 +359,6 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     using super::root;
     using super::root_level;
 
-    typedef std::size_t LevelRank;  // rank of a node **within its level**
-                                    // e.g. a level-k node with LevelRank = 1 is the second-lowest
-                                    // node on level k
-
-    inline Rank rank_of_levelrank(Level lv, LevelRank ofs) const {
-        return (size_t(1)<<lv)*(2*ofs+1)-1;
-    }
-
-    inline LevelRank levelrank_of_rank(Rank r) const {
-        return ((r+1)/(size_t(1)<<level(r))-1)/2;
-    }
-
-    // Rank prediction model: the (max_beg-min_beg) range is partitioned into a number of domains
-    // C, each domain covering an equal-sized portion of that range. The domain pertaining to a
-    // position beg is d(beg) = floor((beg-min_beg)*C/(max_beg-min_beg)), bounded to [0,C).
-    //
-    // For each domain d, we store three parameters: a Level l[d] ∈ [0,root_level] into which we
-    // will jump, and linear weights w[d,0] and w[d,1] for the regression of LevelRank on Pos,
-    //   lr(beg) ~ w[d(beg),0] + w[d(beg),1]*beg
-    //
-    // Then, jump to the node: rank_of_levelrank(l[d(beg)], lr(beg))
-
-    unsigned domains; // C
-    Pos domain_size = Node::npos;
-    std::vector<float> parameters;  // C rows of three parameters (row-major storage): w[0,d],
-                                    // w[1,d] and l[d]. NB: the third is a Level stored as a float.
-    Pos min_beg = std::numeric_limits<Pos>::max();
-
-    inline unsigned which_domain(Pos beg) const {
-        if (beg < min_beg) {
-            return 0;
-        }
-        return std::min(domains-1, unsigned((beg-min_beg)/domain_size));
-    }
-
-    inline Rank predict_in_domain(Level lv, float w0, float w1, Pos beg) const {
-        const float ofs_f = w0 + w1*float(beg);
-        assert(std::isfinite(ofs_f));
-        const Rank r = rank_of_levelrank(lv, LevelRank(std::max(0.0f, roundf(ofs_f))));
-        assert(r >= nodes.size() || level(r) == lv);
-
-        // detail: if rank is imaginary (beg is off-scale high), start from rightmost real leaf
-        const auto nsz = nodes.size();
-        return r < nsz ? r : (nsz - (2 - nsz%2));
-    }
-
-    void train() {
-        // scan the nodes to extract <Pos,Rank> points partitioned by domain
-        std::vector<std::vector<std::pair<Pos,Rank>>> points(domains);
-        for (Rank r = 0; r < nodes.size(); ++r) {
-            points.at(which_domain(nodes[r].beg())).push_back(std::make_pair(nodes[r].beg(), r));
-        }
-        // train each domain-specific model
-        for (unsigned domain = 0; domain < domains; ++domain) {
-            // partition the domain points by tree level, converting Ranks to LevelRanks
-            std::vector<std::vector<std::pair<Pos,LevelRank>>> points_by_level(root_level+1);
-            for (const auto& p : points[domain]) {
-                Level lv = level(p.second);
-                points_by_level.at(lv)
-                               .push_back(std::make_pair(p.first, levelrank_of_rank(p.second)));
-            }
-            // for each level, regress its points, calculate cost function, and record parameters
-            // if the cost is better than previous levels.
-            double lowest_cost = std::numeric_limits<double>::quiet_NaN();
-            for (Level lv = 0; lv < root_level; ++lv) {
-                auto w = regress<Pos,LevelRank>(points_by_level[lv]);
-                if (std::isfinite(w.first) && std::isfinite(w.second)) {
-                    double cost = 0.0;
-                    for (const auto& p : points[domain]) {
-                        Rank fb = predict_in_domain(lv, float(w.first), float(w.second), p.first);
-                        double error = fabs(double(fb) - double(p.second))/double(size_t(1)<<lv);
-                        double error_penalty = error > 1.0 ? 2.0*log2(1+error) : 0.0;
-                        double overlap_penalty = nodes[fb].outside_max_end > p.first ? root_level-lv : 0;
-                        cost += lv + std::max(error_penalty, overlap_penalty);
-                    }
-                    cost /= points[domain].size();
-                    assert(std::isfinite(cost) && cost >= 0.0);
-                    if (cost < root_level && (!std::isfinite(lowest_cost) || cost < lowest_cost)) {
-                        lowest_cost = cost;
-                        float *pp = &(parameters[3*domain]);
-                        pp[0] = float(w.first);
-                        pp[1] = float(w.second);
-                        pp[2] = float(lv);
-                    }
-                }
-            }
-            points[domain].clear(); // free a little memory
-            /*
-            std::cout << "domain = " << domain << " level = " << Level(parameters[3*domain+2]) 
-                      << " cost = " << lowest_cost << std::endl;
-            */
-        }
-    }
-
-    // Given qbeg, select domain and predict rank from the respective model
-    Rank predict(Pos qbeg) const {
-        auto which = which_domain(qbeg);
-        assert(which < domains);
-
-        const float lv_f = parameters[3*which+2];
-        if (!std::isfinite(lv_f)) {
-            return nrank;
-        }
-        assert(lv_f >= 0 && lv_f <= root_level);
-        const Level lv = (Level) lv_f;
-
-        return predict_in_domain(lv, parameters[3*which], parameters[3*which+1], qbeg);
-    }
-
     inline Rank leftmost_child(Rank subtree) const {
         Level k = level(subtree);
         auto ofs = (Rank(1)<<k) - 1;
@@ -494,6 +385,120 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         }
         const Rank r = rightmost_child(subtree);
         return r < nodes.size()-1 ? nodes[r+1].beg() : std::numeric_limits<Pos>::max();
+    }
+
+    // Additional tree navigation concept, LevelRank: the rank of a node **within its level**
+    // e.g. a level-k node with LevelRank=1 is the second-lowest (second-leftmost) node on level k
+    typedef std::size_t LevelRank;
+
+    inline Rank rank_of_levelrank(Level lv, LevelRank ofs) const {
+        return (size_t(1)<<lv)*(2*ofs+1)-1;
+    }
+
+    inline LevelRank levelrank_of_rank(Rank r) const {
+        return ((r+1)/(size_t(1)<<level(r))-1)/2;
+    }
+
+    // Rank prediction model: the [min_beg, max_beg] range is partitioned into a number C of
+    // domains, each covering an equal-sized portion of that range. The domain pertaining to a
+    // position beg is d(beg) = floor((beg-min_beg)*C/(max_beg-min_beg)), bounded to [0,C).
+    //
+    // For each domain d, we store three parameters: a Level l[d] ∈ [0,root_level] into which we
+    // will jump, and linear weights w[d,0] and w[d,1] for the regression of LevelRank on Pos,
+    //   lr(beg) ~ w[d(beg),0] + w[d(beg),1]*beg
+    //
+    // To start a query for qbeg, jump to the node: rank_of_levelrank(l[d(qbeg)], lr(qbeg))
+
+    unsigned domains;               // C
+    Pos min_beg = std::numeric_limits<Pos>::max(),
+        domain_size = Node::npos;;
+    std::vector<float> parameters;  // C rows of three parameters (row-major storage): w[0,d],
+                                    // w[1,d] and l[d]. NB: the third is a Level stored as a float.
+
+    inline unsigned which_domain(Pos beg) const {
+        if (beg < min_beg) {
+            return 0;
+        }
+        return std::min(domains-1, unsigned((beg-min_beg)/domain_size));
+    }
+
+    inline Rank interpolate(Level lv, float w0, float w1, Pos qbeg) const {
+        // given model parameters within a domain, return the node to start searching for qbeg
+        const float ofs_f = w0 + w1*float(qbeg);
+        assert(std::isfinite(ofs_f));
+        const Rank r = rank_of_levelrank(lv, LevelRank(std::max(0.0f, roundf(ofs_f))));
+        assert(r >= nodes.size() || level(r) == lv);
+
+        // detail: if rank is imaginary (qbeg is off-scale high), start from rightmost real leaf
+        const auto nsz = nodes.size();
+        return r < nsz ? r : (nsz - (2 - nsz%2));
+    }
+
+    void train() {
+        // scan the nodes to extract <Pos,Rank> points partitioned by domain
+        std::vector<std::vector<std::pair<Pos,Rank>>> points(domains);
+        for (Rank r = 0; r < nodes.size(); ++r) {
+            points.at(which_domain(nodes[r].beg())).push_back(std::make_pair(nodes[r].beg(), r));
+        }
+        // train each domain-specific model
+        for (unsigned domain = 0; domain < domains; ++domain) {
+            // partition the domain points by tree level, converting Ranks to LevelRanks
+            std::vector<std::vector<std::pair<Pos,LevelRank>>> points_by_level(root_level+1);
+            for (const auto& p : points[domain]) {
+                Level lv = level(p.second);
+                points_by_level.at(lv)
+                               .push_back(std::make_pair(p.first, levelrank_of_rank(p.second)));
+            }
+            // for each level,
+            double lowest_cost = std::numeric_limits<double>::quiet_NaN();
+            for (Level lv = 0; lv < root_level; ++lv) {
+                // regress points on this level
+                auto w = regress<Pos,LevelRank>(points_by_level[lv]);
+                if (std::isfinite(w.first) && std::isfinite(w.second)) {
+                    // calculate estimate of search cost (average over all domain points)
+                    double cost = 0.0;
+                    for (const auto& p : points[domain]) {
+                        Rank fb = interpolate(lv, float(w.first), float(w.second), p.first);
+                        double error = fabs(double(fb) - double(p.second))/double(size_t(1)<<lv);
+                        double error_penalty = error > 1.0 ? 2.0*log2(1+error) : 0.0;
+                        double overlap_penalty = nodes[fb].outside_max_end > p.first ? 0.5*(root_level-lv) : 0;
+                        cost += lv + std::max(error_penalty, overlap_penalty);
+                    }
+                    cost /= points[domain].size();
+                    assert(std::isfinite(cost) && cost >= 0.0);
+                    // store parameters if cost estimate is lower than top-down search and lower
+                    // than previous levels
+                    if (cost < root_level && (!std::isfinite(lowest_cost) || cost < lowest_cost)) {
+                        lowest_cost = cost;
+                        float *pp = &(parameters[3*domain]);
+                        pp[0] = float(w.first);
+                        pp[1] = float(w.second);
+                        pp[2] = float(lv);
+                    }
+                }
+            }
+            points[domain].clear(); // free a little memory
+            /*
+            std::cout << "domain = " << domain << " level = " << Level(parameters[3*domain+2])
+                      << " E[cost] = " << lowest_cost << std::endl;
+            */
+        }
+    }
+
+    // Given qbeg, select domain and predict search start node
+    Rank predict(Pos qbeg) const {
+        auto which = which_domain(qbeg);
+        assert(which < domains);
+        const float *pp = &(parameters[3*which]);
+
+        const float lv_f = pp[2];
+        if (!std::isfinite(lv_f)) {
+            return nrank;
+        }
+        assert(lv_f >= 0 && lv_f <= root_level);
+        const Level lv = (Level) lv_f;
+
+        return interpolate(lv, pp[0], pp[1], qbeg);
     }
 
     iitii(std::vector<Node>& nodes_, unsigned domains_)
