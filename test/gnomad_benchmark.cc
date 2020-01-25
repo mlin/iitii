@@ -7,19 +7,21 @@ size_t run_queries(const vector<variant>& variants, const tree& t, int max_end, 
     default_random_engine R(42);
     uniform_int_distribution<uint32_t> begD(0, max_end);
     uniform_int_distribution<size_t> vtD(0, variants.size()-1);
+    vector<const variant*> results;
     size_t ans = 0;
     cost = 0;
     for (int i = 0; i < queries; i++) {
         // 50% queries for the interval of a random existing variant (results will include itself)
         // and 50% for 10bp intervals with a uniform random begin position
-        auto qbeg = begD(R);
-        auto qend = qbeg+10;
+        uint32_t qbeg, qend;
         if (i % 2 == 1) {
             const auto& vt = variants.at(vtD(R));
             qbeg = vt.beg;
             qend = vt.end;
+        } else {
+            qbeg = begD(R);
+            qend = qbeg+10;
         }
-        vector<const variant*> results;
         cost += t.overlap(qbeg, qend, results);
         ans += results.size();
     }

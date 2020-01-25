@@ -329,19 +329,6 @@ std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
     return std::make_pair(mean_y - m*mean_x, m);
 }
 
-template<typename XT, typename YT>
-double mean_absolute_residual(const std::vector<std::pair<XT,YT>>& points, double b, double m) {
-    if (points.empty()) {
-        return std::numeric_limits<double>::quiet_NaN();
-    }
-    double sr = 0.0;
-    for (const auto& pt : points) {
-        double y = double(pt.second), fx = (m*double(pt.first)+b);
-        sr += y >= fx ? y-fx : fx-y;
-    }
-    return sr/points.size();
-}
-
 // here it is
 template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>> {
