@@ -27,7 +27,7 @@ Example:
     p_iit db = br.build();
     // alternative: p_iit db = p_iit::builder(container.begin(), container.end()).build();
 
-    std::vector<intpair> results = db.overlap(22, 25);
+    std::vector<const intpair*> results = db.overlap(22, 25);
     // alternative: db.overlap(22, 25, results);
 
 Building iitii works the same way, except build() takes a size_t argument giving the number of
@@ -138,7 +138,7 @@ protected:
     // top-down overlap scan for [qbeg,qend). return # of nodes visited
     // recursion depth limited to tree height
     // TODO: nip&tuck optimizations (eliminate recursion, unroll traversal of low levels, etc.)
-    size_t scan(Rank subtree, Pos qbeg, Pos qend, std::vector<Item>& ans) const {
+    size_t scan(Rank subtree, Pos qbeg, Pos qend, std::vector<const Item*>& ans) const {
         if (subtree == nrank) {
             return 0;
         }
@@ -158,7 +158,7 @@ protected:
             Pos nbeg = n.beg();
             if (nbeg < qend) {          // this node isn't already past query
                 if (n.end() > qbeg) {   // this node overlaps query
-                    ans.push_back(n.item);
+                    ans.push_back(&(n.item));
                 }
                 cost += scan(right(subtree), qbeg, qend, ans);
             }
@@ -219,14 +219,14 @@ public:
     }
 
     // overlap query; fill ans and return query cost (number of tree nodes visited)
-    virtual size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const {
+    virtual size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const {
         ans.clear();
         return scan(root, qbeg, qend, ans);
     }
 
     // overlap query, return vector of results
-    std::vector<Item> overlap(Pos qbeg, Pos qend) const {
-        std::vector<Item> ans;
+    std::vector<const Item*> overlap(Pos qbeg, Pos qend) const {
+        std::vector<const Item*> ans;
         overlap(qbeg, qend, ans);
         return ans;
     }
@@ -553,7 +553,7 @@ public:
     using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node>;
     friend builder;
 
-    size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const override {
+    size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const override {
         // ask model which leaf we should begin our bottom-up climb at
         Rank prediction = predict(qbeg);
         if (prediction == nrank) {

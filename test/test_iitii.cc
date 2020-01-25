@@ -30,8 +30,8 @@ TEST_CASE("cgranges example") {
 
     auto results = tree.overlap(22, 25);
     REQUIRE(results.size() == 2);
-    REQUIRE(results[0].first == 0);
-    REQUIRE(results[1].first == 12);
+    REQUIRE(results[0]->first == 0);
+    REQUIRE(results[1]->first == 12);
 }
 
 TEST_CASE("cgranges example with iitii") {
@@ -39,8 +39,8 @@ TEST_CASE("cgranges example with iitii") {
 
     auto results = tree.overlap(22, 25);
     REQUIRE(results.size() == 2);
-    REQUIRE(results[0].first == 0);
-    REQUIRE(results[1].first == 12);
+    REQUIRE(results[0]->first == 0);
+    REQUIRE(results[1]->first == 12);
 }
 
 TEST_CASE("dark nodes (N=5)") {
@@ -57,8 +57,8 @@ TEST_CASE("dark nodes (N=5)") {
 
     auto results = tree.overlap(6, 10);
     REQUIRE(results.size() == 2);
-    REQUIRE(results[0].first == 0);
-    REQUIRE(results[1].first == 4);
+    REQUIRE(results[0]->first == 0);
+    REQUIRE(results[1]->first == 4);
 
     // to answer the following query, interval tree algo should visit nodes 1, 3, 4, and 5
     REQUIRE(tree.overlap(7, 10, results) == 4);
@@ -70,8 +70,8 @@ TEST_CASE("dark nodes (N=5) with iitii") {
 
     auto results = tree.overlap(6, 10);
     REQUIRE(results.size() == 2);
-    REQUIRE(results[0].first == 0);
-    REQUIRE(results[1].first == 4);
+    REQUIRE(results[0]->first == 0);
+    REQUIRE(results[1]->first == 4);
 
     // with the interpolation index, we can answer this query in one step
     REQUIRE(tree.overlap(7, 10, results) == 1);
@@ -116,20 +116,20 @@ TEST_CASE("fuzz") {
         for (size_t i = 0; i < Q; ++i) {
             auto qbeg = begD(R);
             auto qend = qbeg + 42;
-            vector<pospair> ans;
+            vector<const pospair*> ans;
             cost += tree.overlap(qbeg, qend, ans);
 
-            vector<pospair> naive;
+            vector<const pospair*> naive;
             for (const auto& p : examples) {
                 if (qbeg < p.second && p.first < qend) {
-                    naive.push_back(p);
+                    naive.push_back(&p);
                 }
             }
 
             REQUIRE(ans.size() == naive.size());
             bool alleq = true;
             for (auto p1 = ans.begin(), p2 = naive.begin(); p1 != ans.end(); ++p1, ++p2) {
-                alleq = alleq && (*p1 == *p2);
+                alleq = alleq && (**p1 == **p2);
             }
             REQUIRE(alleq);
             results += ans.size();
@@ -138,7 +138,7 @@ TEST_CASE("fuzz") {
             REQUIRE(ans.size() == naive.size());
             alleq = true;
             for (auto p1 = ans.begin(), p2 = naive.begin(); p1 != ans.end(); ++p1, ++p2) {
-                alleq = alleq && (*p1 == *p2);
+                alleq = alleq && (**p1 == **p2);
             }
             REQUIRE(alleq);
         }
@@ -186,7 +186,7 @@ TEST_CASE("gnomAD chr2") {
         auto tree = iit<int, variant, variant_beg, variant_end>::builder(variants.begin(), variants.end()).build();
         auto treeii = iitii<int, variant, variant_beg, variant_end>::builder(variants.begin(), variants.end()).build(megabases*10);
         size_t cost = 0, costii=0, count=0;
-        vector<variant> results, resultsii;
+        vector<const variant*> results, resultsii;
 
         for (size_t i = 0; i < trials; i++) {
             auto qbeg = begD(R);
@@ -197,7 +197,7 @@ TEST_CASE("gnomAD chr2") {
             count += results.size();
             bool alleq = true;
             for (auto p1 = results.begin(), p2 = resultsii.begin(); p1 != results.end(); ++p1, ++p2) {
-                alleq = alleq && (*p1 == *p2);
+                alleq = alleq && (**p1 == **p2);
             }
             REQUIRE(alleq);
         }

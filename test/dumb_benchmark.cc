@@ -39,7 +39,7 @@ size_t run_queries(const tree& t, uint32_t max_end, size_t queries, size_t& cost
     for (size_t i = 0; i < queries; i++) {
         auto qbeg = begD(R);
         auto qend = qbeg+lenD(R);
-        vector<dumb_item> results;
+        vector<const dumb_item*> results;
         cost += t.overlap(qbeg, qend, results);
         ans += results.size();
     }

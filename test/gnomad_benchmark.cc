@@ -19,7 +19,7 @@ size_t run_queries(const vector<variant>& variants, const tree& t, int max_end, 
             qbeg = vt.beg;
             qend = vt.end;
         }
-        vector<variant> results;
+        vector<const variant*> results;
         cost += t.overlap(qbeg, qend, results);
         ans += results.size();
     }
