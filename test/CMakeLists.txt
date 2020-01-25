@@ -14,11 +14,10 @@ include_directories(${PROJECT_SOURCE_DIR}/..)
 # After build, double-check external/src/htslib-stamp/htslib-build-out.log
 # to make sure CFLAGS were set as expected
 ExternalProject_Add(htslib
-    URL https://github.com/samtools/htslib/releases/download/1.9/htslib-1.9.tar.bz2
+    URL https://github.com/samtools/htslib/releases/download/1.10.2/htslib-1.10.2.tar.bz2
     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/external
-    CONFIGURE_COMMAND ""
-    PATCH_COMMAND sed -i "s/^CFLAGS .*$/CFLAGS = -gdwarf -O3 -DNDEBUG/" Makefile
     BUILD_IN_SOURCE 1
+    CONFIGURE_COMMAND bash -c "autoreconf && CFLAGS='-gdwarf -O3 -DNDEBUG -fvisibility=hidden' ./configure --enable-libcurl=no"
     BUILD_COMMAND bash -c "make -n && make -j$(nproc)"
     INSTALL_COMMAND ""
     LOG_DOWNLOAD ON
@@ -56,19 +55,19 @@ ExternalProject_Add(catch
 ExternalProject_Get_Property(catch source_dir)
 include_directories(${source_dir}/single_include)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -std=c++17 -Wall -Werror=return-type -Wno-reorder -fdiagnostics-color=auto")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -std=c++17 -Wall -Werror=return-type -Wno-reorder -fdiagnostics-color=auto -ffast-math")
 
 add_executable(test_iitii util.h test_iitii.cc)
 add_dependencies(test_iitii catch htslib)
-target_link_libraries(test_iitii libhts libz.a libbz2.a liblzma.a)
+target_link_libraries(test_iitii libhts libz.a libbz2.a liblzma.a libdeflate.a)
 
 add_executable(dumb_benchmark util.h dumb_benchmark.cc)
 add_dependencies(dumb_benchmark htslib)
-target_link_libraries(dumb_benchmark libhts libz.a libbz2.a liblzma.a)
+target_link_libraries(dumb_benchmark libhts libz.a libbz2.a liblzma.a libdeflate.a)
 
 add_executable(gnomad_benchmark util.h gnomad_benchmark.cc)
 add_dependencies(gnomad_benchmark htslib)
-target_link_libraries(gnomad_benchmark libhts libz.a libbz2.a liblzma.a)
+target_link_libraries(gnomad_benchmark libhts libz.a libbz2.a liblzma.a libdeflate.a)
 
 include(CTest)
 add_test(NAME unit_tests COMMAND bash -c "LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so ./test_iitii -d yes")

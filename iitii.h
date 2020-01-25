@@ -306,9 +306,8 @@ struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
 // simple linear regression of y ~ x given points [(x,y)], returning (intercept, slope)
 template<typename XT, typename YT>
 std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
-    if (points.size() <= 1) {
-        return std::make_pair(std::numeric_limits<double>::quiet_NaN(),
-                              std::numeric_limits<double>::quiet_NaN());
+    if (points.size() < 1) {
+        return std::make_pair(0.0, 0.0);
     }
     double sum_x, sum_y, cov, var;
     sum_x = sum_y = cov = var = 0.0;
@@ -364,7 +363,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         // constant-time computation of outside_min_beg: beg() of the node ranked one higher than
         // subtree's rightmost child
         const Rank r = rightmost_child(subtree);
-        __builtin_prefetch(&(nodes[r+1]), 0, 1);
+        __builtin_prefetch(&(nodes[r+1]));
         const Pos beg = nodes[subtree].beg();
         const Rank l = leftmost_child(subtree);
         if (l && nodes[l-1].beg() == beg) {
@@ -397,17 +396,18 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     //
     // To start a query for qbeg, jump to the node: rank_of_levelrank(l[d(qbeg)], lr(qbeg))
 
-    unsigned domains;               // C
+    typedef std::size_t Domain;
+    Domain domains;               // C
     Pos min_beg = std::numeric_limits<Pos>::max(),
         domain_size = Node::npos;;
     std::vector<float> parameters;  // C rows of three parameters (row-major storage): w[0,d],
                                     // w[1,d] and l[d]. NB: the third is a Level stored as a float.
 
-    inline unsigned which_domain(Pos beg) const {
+    inline Domain which_domain(Pos beg) const {
         if (beg < min_beg) {
             return 0;
         }
-        return std::min(domains-1, unsigned((beg-min_beg)/domain_size));
+        return std::min(domains-1, Domain((beg-min_beg)/domain_size));
     }
 
     inline Rank interpolate(Level lv, float w0, float w1, Pos qbeg) const {
@@ -429,7 +429,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
             points.at(which_domain(nodes[r].beg())).push_back(std::make_pair(nodes[r].beg(), r));
         }
         // train each domain-specific model
-        for (unsigned domain = 0; domain < domains; ++domain) {
+        for (Domain domain = 0; domain < domains; ++domain) {
             // partition the domain points by tree level, converting Ranks to LevelRanks
             std::vector<std::vector<std::pair<Pos,LevelRank>>> points_by_level(root_level+1);
             for (const auto& p : points[domain]) {
@@ -438,11 +438,11 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
                                .push_back(std::make_pair(p.first, levelrank_of_rank(p.second)));
             }
             // for each level,
-            double lowest_cost = std::numeric_limits<double>::quiet_NaN();
-            for (Level lv = 0; lv < root_level; ++lv) {
+            double lowest_cost = std::numeric_limits<double>::max();
+            for (Level lv = 0; lv <= 3*root_level/4; ++lv) {
                 // regress points on this level
                 auto w = regress<Pos,LevelRank>(points_by_level[lv]);
-                if (std::isfinite(w.first) && std::isfinite(w.second)) {
+                if (w.second) {
                     // calculate estimate of search cost (average over all domain points)
                     double cost = 0.0;
                     for (const auto& p : points[domain]) {
@@ -456,7 +456,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
                     assert(std::isfinite(cost) && cost >= 0.0);
                     // store parameters if cost estimate is lower than top-down search and lower
                     // than previous levels
-                    if (cost < root_level && (!std::isfinite(lowest_cost) || cost < lowest_cost)) {
+                    if (cost < root_level && cost < lowest_cost) {
                         lowest_cost = cost;
                         float *pp = &(parameters[3*domain]);
                         pp[0] = float(w.first);
@@ -480,7 +480,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         const float *pp = &(parameters[3*which]);
 
         const float lv_f = pp[2];
-        if (!std::isfinite(lv_f)) {
+        if (lv_f < 0) {
             return nrank;
         }
         assert(lv_f >= 0 && lv_f <= root_level);
@@ -489,12 +489,12 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return interpolate(lv, pp[0], pp[1], qbeg);
     }
 
-    iitii(std::vector<Node>& nodes_, unsigned domains_)
+    iitii(std::vector<Node>& nodes_, Domain domains_)
         : super(nodes_)
-        , domains(std::max(1U,domains_))
+        , domains(std::max(Domain(1),domains_))
         , domain_size(std::numeric_limits<Pos>::max())
     {
-        parameters.resize(domains*3, std::numeric_limits<float>::quiet_NaN());
+        parameters.resize(domains*3, -1.0f);
 
         if (nodes.size()) {
             // equal size (in Pos units) of each domain
@@ -548,6 +548,7 @@ public:
             return super::overlap(qbeg, qend, ans);
         }
         assert(level(prediction) <= root_level);
+        __builtin_prefetch(&(nodes[parent(prediction)]));
 
         // climb until our necessary & sufficient criteria are met, or the root
         size_t climb_cost = 0;
@@ -557,6 +558,7 @@ public:
                  qbeg < nodes[subtree].outside_max_end ||   // possible outside overlap from left
                  outside_min_beg(subtree) < qend)) {        // possible outside overlap from right
             subtree = parent(subtree);
+            __builtin_prefetch(&(nodes[parent(subtree)]));
             // TODO: scheme to skip through chains of imaginary nodes along the border
             ++climb_cost;
         }
