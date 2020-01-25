@@ -376,6 +376,8 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     inline Pos outside_min_beg(Rank subtree) const {
         // constant-time computation of outside_min_beg: beg() of the node ranked one higher than
         // subtree's rightmost child
+        const Rank r = rightmost_child(subtree);
+        __builtin_prefetch(&(nodes[r+1]), 0, 1);
         const Pos beg = nodes[subtree].beg();
         const Rank l = leftmost_child(subtree);
         if (l && nodes[l-1].beg() == beg) {
@@ -383,7 +385,6 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
             // and outside_min_beg is defined on nodes with beg >= subroot's.
             return beg;
         }
-        const Rank r = rightmost_child(subtree);
         return r < nodes.size()-1 ? nodes[r+1].beg() : std::numeric_limits<Pos>::max();
     }
 
@@ -577,9 +578,11 @@ public:
         self->queries++;
         self->total_climb_cost += climb_cost;
 
-        // scan the subtree for query results 
+        // scan the subtree for query results.
+        // pessimistically, we triple the climbing cost when adding it to the top-down search cost,
+        // because the outside_min_beg() lookup may incur two additional cache misses.
         ans.clear();
-        return super::scan(subtree, qbeg, qend, ans) + climb_cost;
+        return super::scan(subtree, qbeg, qend, ans) + 3*climb_cost;
     }
 
     size_t queries = 0;

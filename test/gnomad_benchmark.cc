@@ -51,10 +51,8 @@ size_t run_experiment(const vector<variant>& variants, const size_t N,
 }
 
 int main(int argc, char** argv) {
-    // As of this writing (2019-07-29) newer gnomAD versions have far larger files but not many
-    // additional variants (a lot more metadata)
-    const string filename = "/tmp/gnomad.genomes.r2.0.2.sites.chr2.vcf.bgz";
-    const string url = "https://storage.googleapis.com/gnomad-public/release/2.0.2/vcf/genomes/gnomad.genomes.r2.0.2.sites.chr2.vcf.bgz";
+    const string filename = "/tmp/gnomad.genomes.r2.1.1.sites.2.vcf.bgz";
+    const string url = "https://storage.googleapis.com/gnomad-public/release/2.1.1/vcf/genomes/gnomad.genomes.r2.1.1.sites.2.vcf.bgz";
     #ifdef NDEBUG
     const int megabases = 244;
     #else
