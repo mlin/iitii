@@ -45,7 +45,7 @@ size_t run_experiment(const vector<variant>& variants, const size_t N,
     cost = 0;
     size_t result_count = 0;
     queries_ms = milliseconds_to([&](){
-        result_count = run_queries<tree>(variantsN, *ptree, max_end, 10000000, cost);
+        result_count = run_queries<tree>(variantsN, *ptree, max_end, 40000000, cost);
     });
     // cout << "mean climbing per iitii query: " << double(ptree->total_climb_cost)/ptree->queries << endl;
 

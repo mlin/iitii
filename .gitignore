@@ -42,5 +42,6 @@ test/external
 test/Makefile
 test/test_iitii
 test/gnomad_benchmark
+test/ideal_benchmark
 test/variants.txt
 example

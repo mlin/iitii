@@ -61,9 +61,9 @@ add_executable(test_iitii util.h test_iitii.cc)
 add_dependencies(test_iitii catch htslib)
 target_link_libraries(test_iitii libhts libz.a libbz2.a liblzma.a libdeflate.a)
 
-add_executable(dumb_benchmark util.h dumb_benchmark.cc)
-add_dependencies(dumb_benchmark htslib)
-target_link_libraries(dumb_benchmark libhts libz.a libbz2.a liblzma.a libdeflate.a)
+add_executable(ideal_benchmark util.h ideal_benchmark.cc)
+add_dependencies(ideal_benchmark htslib)
+target_link_libraries(ideal_benchmark libhts libz.a libbz2.a liblzma.a libdeflate.a)
 
 add_executable(gnomad_benchmark util.h gnomad_benchmark.cc)
 add_dependencies(gnomad_benchmark htslib)
