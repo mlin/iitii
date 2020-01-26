@@ -60,8 +60,7 @@ TEST_CASE("dark nodes (N=5)") {
     REQUIRE(results[0]->first == 0);
     REQUIRE(results[1]->first == 4);
 
-    // to answer the following query, interval tree algo should visit nodes 1, 3, 4, and 5
-    REQUIRE(tree.overlap(7, 10, results) == 4);
+    REQUIRE(tree.overlap(7, 10, results) == 5);
 }
 
 TEST_CASE("dark nodes (N=5) with iitii") {
@@ -73,7 +72,7 @@ TEST_CASE("dark nodes (N=5) with iitii") {
     REQUIRE(results[0]->first == 0);
     REQUIRE(results[1]->first == 4);
 
-    // with the interpolation index, we can answer this query in one step
+    // with the interpolation index, we can now answer this query in one step
     REQUIRE(tree.overlap(7, 10, results) == 1);
 }
 
@@ -145,8 +144,8 @@ TEST_CASE("fuzz") {
 
         cout << "fuzz N = " << N << ": results = " << results << ", cost = " << cost << ", costii = " << costii << endl;
 
-        // guess bound on cost per query: 2*(lg(N) + results)
-        size_t cost_bound = size_t(2*Q*(log2(N) + results/Q + 1));
+        // guess bound on cost per query: 3*(lg(N) + results)
+        size_t cost_bound = size_t(3*Q*(log2(N) + results/Q + 1));
         REQUIRE(cost < cost_bound);
 
         // iitii should show a cost advantage unless query cost is dominated by result set size
