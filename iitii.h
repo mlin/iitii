@@ -97,7 +97,7 @@ protected:
     // compute a node's level, the # of 1 bits below the lowest 0 bit
     inline Level level(Rank node) const {
         assert(node < full_size);
-        Level ans = __builtin_ctzll(~node);  // bitwise-negate & count trailing zeroes
+        Level ans = __builtin_ctzll(~(unsigned long long)node);  // bitwise-negate & count trailing zeroes
         #ifndef NDEBUG
         Level chk;
         for (chk=0; node&1; chk++, node>>=1);
@@ -351,7 +351,7 @@ struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
 // simple linear regression of y ~ x given points [(x,y)], returning (intercept, slope)
 template<typename XT, typename YT>
 std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
-    if (points.size() < 1) {
+    if (points.size() <= 1) {
         return std::make_pair(0.0, 0.0);
     }
     double sum_x, sum_y, cov, var;
@@ -371,6 +371,14 @@ std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
     }
     const double m = cov / var;
     return std::make_pair(mean_y - m*mean_x, m);
+}
+
+// floor(log2(x)) for positive x (quickly)
+inline unsigned log2ull(unsigned long long x) {
+    assert(x);
+    unsigned ans = unsigned(8*sizeof(unsigned long long) - __builtin_clzll(x) - 1);
+    assert(ans == unsigned(floor(log2(double(x)))));
+    return ans;
 }
 
 // here it is
@@ -456,6 +464,9 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return r < nsz ? r : (nsz - (2 - nsz%2));
     }
 
+    // Fibonacci-ish series of tree levels at which to evaluate interpolation model fit
+    const std::vector<Level> TRAIN_LEVELS = {0, 1, 2, 4, 7, 12, 20, 33, 54};
+
     void train() {
         // scan the nodes to extract <Pos,Rank> points partitioned by domain
         std::vector<std::vector<std::pair<Pos,Rank>>> points(domains);
@@ -473,29 +484,30 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
             }
             // for each level,
             double lowest_cost = std::numeric_limits<double>::max();
-            for (Level k = 0; k <= 3*root_level/4; ++k) {
-                // regress points on this level
-                auto w = regress<Pos,LevelRank>(points_by_level[k]);
-                if (w.second) {
-                    // calculate estimate of search cost (average over all domain points)
-                    double cost = 0.0;
-                    for (const auto& p : points[domain]) {
-                        Rank fb = interpolate(k, float(w.first), float(w.second), p.first);
-                        double error = fabs(double(fb) - double(p.second))/double(size_t(1)<<k);
-                        double error_penalty = error > 1.0 ? 2.0*log2(1+error) : 0.0;
-                        double overlap_penalty = nodes[fb].outside_max_end > p.first ? 0.5*(root_level-k) : 0;
-                        cost += k + std::max(error_penalty, overlap_penalty);
-                    }
-                    cost /= points[domain].size();
-                    assert(std::isfinite(cost) && cost >= 0.0);
-                    // store parameters if cost estimate is lower than top-down search and lower
-                    // than previous levels
-                    if (cost < root_level && cost < lowest_cost) {
-                        lowest_cost = cost;
-                        float *pp = &(parameters[3*domain]);
-                        pp[0] = float(w.first);
-                        pp[1] = float(w.second);
-                        pp[2] = float(k);
+            for (const Level k : TRAIN_LEVELS) {
+                if (k < root_level && points_by_level[k].size() > 1) {
+                    // regress points on this level
+                    auto w = regress<Pos,LevelRank>(points_by_level[k]);
+                    if (w.second) {
+                        // calculate estimate of search cost (average over all domain points)
+                        size_t cost = 0;
+                        for (const auto& p : points[domain]) {
+                            Rank fb = interpolate(k, float(w.first), float(w.second), p.first);
+                            const size_t error = (fb>=p.second ? fb-p.second : p.second-fb)/(size_t(1)<<k);
+                            const size_t error_penalty = error ? 2*(1+log2ull(error)) : 0,
+                                         overlap_penalty = nodes[fb].outside_max_end>p.first ? 1+(root_level-k)/2 : 0;
+                            cost += k + std::max(error_penalty, overlap_penalty);
+                        }
+                        double avg_cost = double(cost)/points[domain].size();
+                        // store parameters if cost estimate is lower than top-down search and lower
+                        // than previous levels
+                        if (avg_cost < root_level && avg_cost < lowest_cost) {
+                            lowest_cost = avg_cost;
+                            float *pp = &(parameters[3*domain]);
+                            pp[0] = float(w.first);
+                            pp[1] = float(w.second);
+                            pp[2] = float(k);
+                        }
                     }
                 }
             }
