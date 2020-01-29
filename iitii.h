@@ -211,6 +211,7 @@ protected:
         return cost;
     }
 
+public:
     iit_base(NodeArray<Node>& nodes_)
         : nodes(std::move(nodes_))
         , root_level(0)
@@ -265,7 +266,6 @@ protected:
         }
     }
 
-public:
     // overlap query; fill ans and return query cost (number of tree nodes visited)
     virtual size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const {
         ans.clear();
@@ -280,16 +280,28 @@ public:
     }
 };
 
+// Wrapper for std::sort; the sorting algorithm can be customized by providing a different function
+// to the builder constructor.
+template<class NodeArray>
+void iit_sort(NodeArray& vec) {
+    std::sort(vec.begin(), vec.end());
+}
+
 // template for the builder class exposed by each user-facing class, which takes in items either
 // all at once from InputIterator, or streaming one-by-one
-template<class iitT, typename Item, class Node, template<class> class NodeArray, void sort(NodeArray<Node>&)>
+template<class iitT, typename Item, class Node, template<class> class NodeArray>
 class iit_builder_base {
     NodeArray<Node> nodes_;
+    std::function<void(NodeArray<Node>&)> sort_;
 
 public:
-    iit_builder_base() = default;
+    iit_builder_base(void sort(NodeArray<Node>&) = iit_sort<NodeArray<Node>>)
+        : sort_(sort)
+        {}
+
     template<typename InputIterator>
-    iit_builder_base(InputIterator begin, InputIterator end) {
+    iit_builder_base(InputIterator begin, InputIterator end, void sort(NodeArray<Node>&) = iit_sort<NodeArray<Node>>) 
+        : sort_(sort) {
         add(begin, end);
     }
 
@@ -304,32 +316,27 @@ public:
 
     template<typename... Args>
     iitT build(Args&&... args) {
-        sort(nodes_);
+        sort_(nodes_);
         return iitT(nodes_, std::forward<Args>(args)...);
     }
 };
 
-template<class Node>
-void iit_sort(std::vector<Node>& vec) {
-    std::sort(vec.begin(), vec.end());
-}
-
 // Basic implicit interval tree (a reimplementation of cgranges)
 // The optional fifth and sixth template parameters can substitute a different NodeArray
-// implementation and/or sorting algorithm.
-template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&),
-         template<class> class NodeArray = std::vector,
-         void sort(NodeArray<iit_node_base<Pos, Item, get_beg, get_end>>&) = iit_sort<iit_node_base<Pos, Item, get_beg, get_end>>>
+// implementation.
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&), template<class> class NodeArray = std::vector>
 class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>, NodeArray> {
     using Node = iit_node_base<Pos, Item, get_beg, get_end>;
 
+public:
+    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node, NodeArray>;
+    friend builder;
+
+    // construct from existing sorted NodeArray, which will be moved into the new iit.
+    // (usually use builder instead)
     iit(NodeArray<Node>& nodes_)
         : iit_base<Pos, Item, Node, NodeArray>(nodes_)
         {}
-
-public:
-    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node, NodeArray, sort>;
-    friend builder;
 };
 
 
@@ -395,9 +402,7 @@ inline unsigned log2ull(unsigned long long x) {
 }
 
 // here it is
-template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&),
-         template<class> class NodeArray = std::vector,
-         void sort(NodeArray<iitii_node<Pos, Item, get_beg, get_end>>&) = iit_sort<iitii_node<Pos, Item, get_beg, get_end>>>
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&), template<class> class NodeArray = std::vector>
 class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>, NodeArray> {
     using Node = iitii_node<Pos, Item, get_beg, get_end>;
     using super = iit_base<Pos, Item, Node, NodeArray>;
@@ -553,6 +558,13 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return interpolate(k, pp[0], pp[1], qbeg);
     }
 
+public:
+    // iitii::builder::build() takes a size_t argument giving the number of domains to model
+    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node, NodeArray>;
+    friend builder;
+
+    // construct from existing sorted NodeArray, which will be moved into the new iit.
+    // (usually use builder instead)
     iitii(NodeArray<Node>& nodes_, Domain domains_)
         : super(nodes_)
         , domains(std::max(Domain(1),domains_))
@@ -598,11 +610,6 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
             train();
         }
     }
-
-public:
-    // iitii::builder::build() takes a size_t argument giving the number of domains to model
-    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node, NodeArray, sort>;
-    friend builder;
 
     size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const override {
         // ask model which leaf we should begin our bottom-up climb at
