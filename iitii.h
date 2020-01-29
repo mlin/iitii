@@ -77,7 +77,7 @@ struct iit_node_base {
 // Base template for an implicit interval tree, with internal repr
 //     Node<Pos, Item, ...> : iit_node_base<Pos, Item, ...>
 // User should not deal with this directly, but instantiate sub-templates iit or iiitii (below)
-template<typename Pos, typename Item, typename Node>
+template<typename Pos, typename Item, class Node, template<class> class NodeArray>
 class iit_base {
 protected:
     // aliases to help keep the Pos, Rank, and Level concepts straight
@@ -87,7 +87,7 @@ protected:
 
     static const Rank nrank = std::numeric_limits<Rank>::max();  // invalid Rank
 
-    std::vector<Node> nodes;  // array of Nodes sorted by beginning position
+    NodeArray<Node> nodes;   // array of Nodes sorted by beginning position
     size_t full_size;         // size of the full binary tree containing the nodes; liable to be
                               // as large as 2*nodes.size()-1, including imaginary nodes.
 
@@ -211,8 +211,7 @@ protected:
         return cost;
     }
 
-public:
-    iit_base(std::vector<Node>& nodes_)
+    iit_base(NodeArray<Node>& nodes_)
         : nodes(std::move(nodes_))
         , root_level(0)
         , root(std::numeric_limits<Rank>::max())
@@ -223,8 +222,11 @@ public:
         root = (Rank(1) << root_level) - 1;
 
         if (nodes.size()) {
-            // sort the nodes by interval beg (then end)
-            std::sort(nodes.begin(), nodes.end());
+            #ifndef NDEBUG
+            for (Rank r = 0; r < nodes.size()-1; ++r) {
+                assert(nodes[r].beg() <= nodes[r+1].beg());
+            }
+            #endif
 
             // Memoize the path from the rightmost leaf up to the root. This will trace the border
             // between the real and imaginary nodes (if any), which we'll refer to in indexing
@@ -263,6 +265,7 @@ public:
         }
     }
 
+public:
     // overlap query; fill ans and return query cost (number of tree nodes visited)
     virtual size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const {
         ans.clear();
@@ -279,9 +282,9 @@ public:
 
 // template for the builder class exposed by each user-facing class, which takes in items either
 // all at once from InputIterator, or streaming one-by-one
-template<class iitT, typename Item, typename Node>
+template<class iitT, typename Item, class Node, template<class> class NodeArray, void sort(NodeArray<Node>&)>
 class iit_builder_base {
-    std::vector<Node> nodes_;
+    NodeArray<Node> nodes_;
 
 public:
     iit_builder_base() = default;
@@ -301,21 +304,31 @@ public:
 
     template<typename... Args>
     iitT build(Args&&... args) {
+        sort(nodes_);
         return iitT(nodes_, std::forward<Args>(args)...);
     }
 };
 
+template<class Node>
+void iit_sort(std::vector<Node>& vec) {
+    std::sort(vec.begin(), vec.end());
+}
+
 // Basic implicit interval tree (a reimplementation of cgranges)
-template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
-class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>> {
+// The optional fifth and sixth template parameters can substitute a different NodeArray
+// implementation and/or sorting algorithm.
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&),
+         template<class> class NodeArray = std::vector,
+         void sort(NodeArray<iit_node_base<Pos, Item, get_beg, get_end>>&) = iit_sort<iit_node_base<Pos, Item, get_beg, get_end>>>
+class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>, NodeArray> {
     using Node = iit_node_base<Pos, Item, get_beg, get_end>;
 
-    iit(std::vector<Node>& nodes_)
-        : iit_base<Pos, Item, Node>(nodes_)
+    iit(NodeArray<Node>& nodes_)
+        : iit_base<Pos, Item, Node, NodeArray>(nodes_)
         {}
 
 public:
-    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node>;
+    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node, NodeArray, sort>;
     friend builder;
 };
 
@@ -382,10 +395,12 @@ inline unsigned log2ull(unsigned long long x) {
 }
 
 // here it is
-template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
-class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>> {
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&),
+         template<class> class NodeArray = std::vector,
+         void sort(NodeArray<iitii_node<Pos, Item, get_beg, get_end>>&) = iit_sort<iitii_node<Pos, Item, get_beg, get_end>>>
+class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>, NodeArray> {
     using Node = iitii_node<Pos, Item, get_beg, get_end>;
-    using super = iit_base<Pos, Item, Node>;
+    using super = iit_base<Pos, Item, Node, NodeArray>;
     using typename super::Rank;
     using typename super::Level;
     using super::left;
@@ -464,10 +479,10 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return r < nsz ? r : (nsz - (2 - nsz%2));
     }
 
-    // Fibonacci-ish series of tree levels at which to evaluate interpolation model fit
-    const std::vector<Level> TRAIN_LEVELS = {0, 1, 2, 4, 7, 12, 20, 33, 54};
-
     void train() {
+        // Fibonacci-ish series of tree levels at which to evaluate interpolation model fit
+        const std::vector<Level> TRAIN_LEVELS = {0, 1, 2, 4, 7, 12, 20, 33, 54};
+
         // scan the nodes to extract <Pos,Rank> points partitioned by domain
         std::vector<std::vector<std::pair<Pos,Rank>>> points(domains);
         for (Rank r = 0; r < nodes.size(); ++r) {
@@ -538,7 +553,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return interpolate(k, pp[0], pp[1], qbeg);
     }
 
-    iitii(std::vector<Node>& nodes_, Domain domains_)
+    iitii(NodeArray<Node>& nodes_, Domain domains_)
         : super(nodes_)
         , domains(std::max(Domain(1),domains_))
         , domain_size(std::numeric_limits<Pos>::max())
@@ -548,7 +563,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         if (nodes.size()) {
             // equal size (in Pos units) of each domain
             min_beg = nodes[0].beg();
-            domain_size = 1 + (nodes.back().beg()-min_beg)/domains;
+            domain_size = 1 + (nodes[nodes.size()-1].beg()-min_beg)/domains;
 
             // compute running max_end along the sorted array, which we'll look up while computing
             // outside_max_end below
@@ -586,7 +601,7 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
 
 public:
     // iitii::builder::build() takes a size_t argument giving the number of domains to model
-    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node>;
+    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node, NodeArray, sort>;
     friend builder;
 
     size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const override {
