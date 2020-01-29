@@ -211,7 +211,6 @@ protected:
         return cost;
     }
 
-public:
     iit_base(NodeArray<Node>& nodes_)
         : nodes(std::move(nodes_))
         , root_level(0)
@@ -266,6 +265,7 @@ public:
         }
     }
 
+public:
     // overlap query; fill ans and return query cost (number of tree nodes visited)
     virtual size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const {
         ans.clear();
@@ -328,15 +328,13 @@ template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(cons
 class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>, NodeArray> {
     using Node = iit_node_base<Pos, Item, get_beg, get_end>;
 
-public:
-    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node, NodeArray>;
-    friend builder;
-
-    // construct from existing sorted NodeArray, which will be moved into the new iit.
-    // (usually use builder instead)
     iit(NodeArray<Node>& nodes_)
         : iit_base<Pos, Item, Node, NodeArray>(nodes_)
         {}
+
+public:
+    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node, NodeArray>;
+    friend builder;    
 };
 
 
@@ -558,13 +556,6 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
         return interpolate(k, pp[0], pp[1], qbeg);
     }
 
-public:
-    // iitii::builder::build() takes a size_t argument giving the number of domains to model
-    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node, NodeArray>;
-    friend builder;
-
-    // construct from existing sorted NodeArray, which will be moved into the new iit.
-    // (usually use builder instead)
     iitii(NodeArray<Node>& nodes_, Domain domains_)
         : super(nodes_)
         , domains(std::max(Domain(1),domains_))
@@ -610,6 +601,11 @@ public:
             train();
         }
     }
+
+public:
+    // iitii::builder::build() takes a size_t argument giving the number of domains to model
+    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node, NodeArray>;
+    friend builder;
 
     size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const override {
         // ask model which leaf we should begin our bottom-up climb at
