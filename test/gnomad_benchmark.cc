@@ -7,19 +7,21 @@ size_t run_queries(const vector<variant>& variants, const tree& t, int max_end, 
     default_random_engine R(42);
     uniform_int_distribution<uint32_t> begD(0, max_end);
     uniform_int_distribution<size_t> vtD(0, variants.size()-1);
+    vector<const variant*> results;
     size_t ans = 0;
     cost = 0;
     for (int i = 0; i < queries; i++) {
         // 50% queries for the interval of a random existing variant (results will include itself)
         // and 50% for 10bp intervals with a uniform random begin position
-        auto qbeg = begD(R);
-        auto qend = qbeg+10;
+        uint32_t qbeg, qend;
         if (i % 2 == 1) {
             const auto& vt = variants.at(vtD(R));
             qbeg = vt.beg;
             qend = vt.end;
+        } else {
+            qbeg = begD(R);
+            qend = qbeg+10;
         }
-        vector<variant> results;
         cost += t.overlap(qbeg, qend, results);
         ans += results.size();
     }
@@ -43,7 +45,7 @@ size_t run_experiment(const vector<variant>& variants, const size_t N,
     cost = 0;
     size_t result_count = 0;
     queries_ms = milliseconds_to([&](){
-        result_count = run_queries<tree>(variantsN, *ptree, max_end, 10000000, cost);
+        result_count = run_queries<tree>(variantsN, *ptree, max_end, 40000000, cost);
     });
     // cout << "mean climbing per iitii query: " << double(ptree->total_climb_cost)/ptree->queries << endl;
 
@@ -51,10 +53,8 @@ size_t run_experiment(const vector<variant>& variants, const size_t N,
 }
 
 int main(int argc, char** argv) {
-    // As of this writing (2019-07-29) newer gnomAD versions have far larger files but not many
-    // additional variants (a lot more metadata)
-    const string filename = "/tmp/gnomad.genomes.r2.0.2.sites.chr2.vcf.bgz";
-    const string url = "https://storage.googleapis.com/gnomad-public/release/2.0.2/vcf/genomes/gnomad.genomes.r2.0.2.sites.chr2.vcf.bgz";
+    const string filename = "/tmp/gnomad.genomes.r2.1.1.sites.2.vcf.bgz";
+    const string url = "https://storage.googleapis.com/gnomad-public/release/2.1.1/vcf/genomes/gnomad.genomes.r2.1.1.sites.2.vcf.bgz";
     #ifdef NDEBUG
     const int megabases = 244;
     #else

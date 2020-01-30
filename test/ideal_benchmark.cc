@@ -1,26 +1,28 @@
+// benchmark iitii with synthetic ideal data (beg positions can be interpolated perfectly)
+
 #include "util.h"
 #include <fstream>
 #include <random>
 
-struct dumb_item {
+struct ideal_item {
     uint32_t beg;
     uint32_t end;
 };
 
-uint32_t dumb_beg(const dumb_item& it) { return it.beg; }
-uint32_t dumb_end(const dumb_item& it) { return it.end; }
+uint32_t ideal_beg(const ideal_item& it) { return it.beg; }
+uint32_t ideal_end(const ideal_item& it) { return it.end; }
 
-using dumb_iit = iit<uint32_t, dumb_item, dumb_beg, dumb_end>;
-using dumb_iitii = iitii<uint32_t, dumb_item, dumb_beg, dumb_end>;
+using ideal_iit = iit<uint32_t, ideal_item, ideal_beg, ideal_end>;
+using ideal_iitii = iitii<uint32_t, ideal_item, ideal_beg, ideal_end>;
 
-vector<dumb_item> generate(size_t N) {
+vector<ideal_item> generate(size_t N) {
     // each item ranked i has begin position 10*i, with geometrically distributed length mean 20.
     default_random_engine R(42);
     geometric_distribution<uint32_t> lenD(0.05);
-    vector<dumb_item> ans;
+    vector<ideal_item> ans;
 
     for (uint32_t i = 0; i < N; i++) {
-        dumb_item it;
+        ideal_item it;
         it.beg = i*10;
         it.end = it.beg + lenD(R);
         ans.push_back(it);
@@ -33,13 +35,13 @@ template <class tree>
 size_t run_queries(const tree& t, uint32_t max_end, size_t queries, size_t& cost) {
     default_random_engine R(42);
     uniform_int_distribution<uint32_t> begD(0, max_end);
-    geometric_distribution<uint32_t> lenD(0.1);
+    geometric_distribution<uint32_t> lenD(0.025);
     size_t ans = 0;
     cost = 0;
     for (size_t i = 0; i < queries; i++) {
         auto qbeg = begD(R);
         auto qend = qbeg+lenD(R);
-        vector<dumb_item> results;
+        vector<const ideal_item*> results;
         cost += t.overlap(qbeg, qend, results);
         ans += results.size();
     }
@@ -47,7 +49,7 @@ size_t run_queries(const tree& t, uint32_t max_end, size_t queries, size_t& cost
 }
 
 template <class tree, typename... Args>
-size_t run_experiment(vector<dumb_item> items, uint64_t& build_ms, uint64_t& queries_ms, size_t& cost, Args&&... args) {
+size_t run_experiment(vector<ideal_item> items, uint64_t& build_ms, uint64_t& queries_ms, size_t& cost, Args&&... args) {
     unique_ptr<tree> ptree;
     build_ms = milliseconds_to([&](){
         auto t = typename tree::builder(items.begin(), items.end()).build(forward<Args>(args)...);
@@ -70,9 +72,9 @@ int main(int argc, char** argv) {
         auto items = generate(N);
         uint64_t build_ms, queries_ms;
         size_t cost;
-        size_t result_count = run_experiment<dumb_iit>(items, build_ms, queries_ms, cost);
+        size_t result_count = run_experiment<ideal_iit>(items, build_ms, queries_ms, cost);
         cout << "iit\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t" << result_count << endl;
-        if (result_count != run_experiment<dumb_iitii>(items, build_ms, queries_ms, cost, 1)) {
+        if (result_count != run_experiment<ideal_iitii>(items, build_ms, queries_ms, cost, 1)) {
             throw runtime_error("RED ALERT: inconsistent results");
         }
         cout << "iitii\t" << N << "\t" << build_ms << "\t" << queries_ms << "\t" << cost << "\t" << result_count << endl;

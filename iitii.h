@@ -27,7 +27,7 @@ Example:
     p_iit db = br.build();
     // alternative: p_iit db = p_iit::builder(container.begin(), container.end()).build();
 
-    std::vector<intpair> results = db.overlap(22, 25);
+    std::vector<const intpair*> results = db.overlap(22, 25);
     // alternative: db.overlap(22, 25, results);
 
 Building iitii works the same way, except build() takes a size_t argument giving the number of
@@ -77,7 +77,7 @@ struct iit_node_base {
 // Base template for an implicit interval tree, with internal repr
 //     Node<Pos, Item, ...> : iit_node_base<Pos, Item, ...>
 // User should not deal with this directly, but instantiate sub-templates iit or iiitii (below)
-template<typename Pos, typename Item, typename Node>
+template<typename Pos, typename Item, class Node, template<class> class NodeArray>
 class iit_base {
 protected:
     // aliases to help keep the Pos, Rank, and Level concepts straight
@@ -87,7 +87,7 @@ protected:
 
     static const Rank nrank = std::numeric_limits<Rank>::max();  // invalid Rank
 
-    std::vector<Node> nodes;  // array of Nodes sorted by beginning position
+    NodeArray<Node> nodes;   // array of Nodes sorted by beginning position
     size_t full_size;         // size of the full binary tree containing the nodes; liable to be
                               // as large as 2*nodes.size()-1, including imaginary nodes.
 
@@ -97,7 +97,7 @@ protected:
     // compute a node's level, the # of 1 bits below the lowest 0 bit
     inline Level level(Rank node) const {
         assert(node < full_size);
-        Level ans = __builtin_ctzll(~node);  // bitwise-negate & count trailing zeroes
+        Level ans = __builtin_ctzll(~(unsigned long long)node);  // bitwise-negate & count trailing zeroes
         #ifndef NDEBUG
         Level chk;
         for (chk=0; node&1; chk++, node>>=1);
@@ -107,67 +107,111 @@ protected:
     }
 
     // get node's parent, or nrank if called on the root
-    inline Rank parent(Rank node) const {
+    inline Rank parent(Rank node, Level k) const {
+        assert(k == level(node));
         assert(node < full_size);
         if (node == root) {
             return nrank;
         }
-        Level lv = level(node);
-        Rank ofs = Rank(1) << lv;
+        Rank ofs = Rank(1) << k;
         assert(node >= ofs-1);
-        if (((node>>(lv+1)) & 1)) {  // node is right child
+        if (((node>>(k+1)) & 1)) {  // node is right child
             assert(node >= ofs);
             return node-ofs;
         }
         // node is left child
         return node+ofs;
     }
+    inline Rank parent2(Rank node) const {
+        // helper to compute level if it isn't already known (which it often is)
+        return parent(node, level(node));
+    }
 
     // get node's left child, or nrank if called on a leaf
-    inline Rank left(Rank node) const {
-        Level lv = level(node);
-        return lv > 0 ? node - (Rank(1) << (lv-1)) : nrank;
+    inline Rank left(Rank node, Level k) const {
+        assert(k == level(node));
+        return k > 0 ? node - (Rank(1) << (k-1)) : nrank;
+    }
+    inline Rank left2(Rank node) const {
+        return left(node, level(node));
     }
 
     // get node's right child, or nrank if called on a leaf
-    inline Rank right(Rank node) const {
-        Level lv = level(node);
-        return lv > 0 ? node + (Rank(1) << (lv-1)) : nrank;
+    inline Rank right(Rank node, Level k) const {
+        assert(k == level(node));
+        return k > 0 ? node + (Rank(1) << (k-1)) : nrank;
+    }
+    inline Rank right2(Rank node) const {
+        return right(node, level(node));
     }
 
-    // top-down overlap scan for [qbeg,qend). return # of nodes visited
+    // leftmost leaf under subtree root
+    inline Rank leftmost_leaf(Rank subtree, Level k) const {
+        assert(k == level(subtree));
+        auto ofs = (Rank(1)<<k) - 1;
+        assert(subtree >= ofs);
+        return subtree - ofs;
+    }
+    inline Rank leftmost_leaf2(Rank subtree) const {
+        return leftmost_leaf(subtree, level(subtree));
+    }
+
+    // rightmost leaf under subtree root
+    inline Rank rightmost_leaf(Rank subtree, Level k) const {
+        assert(k == level(subtree));
+        auto ofs = (Rank(1)<<k) - 1;
+        assert(subtree + ofs < full_size);
+        return subtree + ofs;
+    }
+    inline Rank rightmost_leaf2(Rank subtree) const {
+        return rightmost_leaf(subtree, level(subtree));
+    }
+
+    // top-down overlap scan for [qbeg,qend). return # of nodes visited.
     // recursion depth limited to tree height
-    // TODO: nip&tuck optimizations (eliminate recursion, unroll traversal of low levels, etc.)
-    size_t scan(Rank subtree, Pos qbeg, Pos qend, std::vector<Item>& ans) const {
-        if (subtree == nrank) {
-            return 0;
-        }
+    size_t scan(Rank subtree, Level k, Pos qbeg, Pos qend, std::vector<const Item*>& ans) const {
         assert(subtree < full_size);
+        assert(k == level(subtree));
+
         if (subtree >= nodes.size()) {
             // When we arrive at an imaginary node, its right subtree must be all imaginary, so we
             // only need to descend left.
-            // TODO: should be able to work out a closed formula for the next real node we'll find,
-            //       given subtree, n.size(), and full_size.
-            return 1 + scan(left(subtree), qbeg, qend, ans);
+            return 1 + (k>0 ? scan(left(subtree, k), k-1, qbeg, qend, ans) : 0);
+        } else if (k <= 2) {
+            // unroll low-level traversal to reduce overhead
+            const Rank lml = leftmost_leaf(subtree, k),
+                       rml = std::min(rightmost_leaf(subtree, k), nodes.size()-1);
+            Rank r = lml;
+            for (; r <= rml; ++r) {
+                const Node& n = nodes[r];
+                if (n.beg() >= qend) {
+                    break;
+                }
+                if (n.end() > qbeg) {
+                    ans.push_back(&(n.item));
+                }
+            }
+            return r-lml;
         }
 
+        // textbook recursive search
         size_t cost = 1;
         const Node& n = nodes[subtree];
         if (n.inside_max_end > qbeg) {  // something in current subtree extends into/over query
-            cost += scan(left(subtree), qbeg, qend, ans);
+            const Level ck = k-1;
+            cost += scan(left(subtree, k), ck, qbeg, qend, ans);
             Pos nbeg = n.beg();
             if (nbeg < qend) {          // this node isn't already past query
                 if (n.end() > qbeg) {   // this node overlaps query
-                    ans.push_back(n.item);
+                    ans.push_back(&(n.item));
                 }
-                cost += scan(right(subtree), qbeg, qend, ans);
+                cost += scan(right(subtree, k), ck, qbeg, qend, ans);
             }
         }
         return cost;
     }
 
-public:
-    iit_base(std::vector<Node>& nodes_)
+    iit_base(NodeArray<Node>& nodes_)
         : nodes(std::move(nodes_))
         , root_level(0)
         , root(std::numeric_limits<Rank>::max())
@@ -178,8 +222,11 @@ public:
         root = (Rank(1) << root_level) - 1;
 
         if (nodes.size()) {
-            // sort the nodes by interval beg (then end)
-            std::sort(nodes.begin(), nodes.end());
+            #ifndef NDEBUG
+            for (Rank r = 0; r < nodes.size()-1; ++r) {
+                assert(nodes[r].beg() <= nodes[r+1].beg());
+            }
+            #endif
 
             // Memoize the path from the rightmost leaf up to the root. This will trace the border
             // between the real and imaginary nodes (if any), which we'll refer to in indexing
@@ -188,20 +235,20 @@ public:
                 nodes.size() - (2 - nodes.size() % 2)  // rightmost real leaf
             });
             while (right_border_nodes.back() != root) {
-                right_border_nodes.push_back(parent(right_border_nodes.back()));
+                right_border_nodes.push_back(parent2(right_border_nodes.back()));
             }
 
             // bottom-up indexing
             Pos right_border_ime = nodes[right_border_nodes[0]].inside_max_end;
-            for (Level lv=1; lv <= root_level; ++lv) {
+            for (Level k=1; k <= root_level; ++k) {
                 // for each in nodes on this level
-                size_t x = size_t(1)<<(lv-1), step = x<<2;
+                size_t x = size_t(1)<<(k-1), step = x<<2;
                 for (Rank n = (x<<1)-1; n < nodes.size(); n += step) {
                     // figure inside_max_end
                     Pos ime = nodes[n].end();
-                    ime = std::max(ime, nodes[left(n)].inside_max_end);
-                    if (right(n) < nodes.size()) {
-                        ime = std::max(ime, nodes[right(n)].inside_max_end);
+                    ime = std::max(ime, nodes[left(n,k)].inside_max_end);
+                    if (right(n,k) < nodes.size()) {
+                        ime = std::max(ime, nodes[right(n,k)].inside_max_end);
                     } else {
                         // right child is imaginary; take the last border observation
                         ime = std::max(ime, right_border_ime);
@@ -209,7 +256,7 @@ public:
                     assert(ime != Node::npos);
                     nodes[n].inside_max_end = ime;
 
-                    if (n == right_border_nodes[lv]) {
+                    if (n == right_border_nodes[k]) {
                         // track inside_max_end of the real nodes on the border
                         right_border_ime = ime;
                     }
@@ -218,30 +265,43 @@ public:
         }
     }
 
+public:
     // overlap query; fill ans and return query cost (number of tree nodes visited)
-    virtual size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const {
+    virtual size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const {
         ans.clear();
-        return scan(root, qbeg, qend, ans);
+        return scan(root, root_level, qbeg, qend, ans);
     }
 
     // overlap query, return vector of results
-    std::vector<Item> overlap(Pos qbeg, Pos qend) const {
-        std::vector<Item> ans;
+    std::vector<const Item*> overlap(Pos qbeg, Pos qend) const {
+        std::vector<const Item*> ans;
         overlap(qbeg, qend, ans);
         return ans;
     }
 };
 
+// Wrapper for std::sort; the sorting algorithm can be customized by providing a different function
+// to the builder constructor.
+template<class NodeArray>
+void iit_sort(NodeArray& vec) {
+    std::sort(vec.begin(), vec.end());
+}
+
 // template for the builder class exposed by each user-facing class, which takes in items either
 // all at once from InputIterator, or streaming one-by-one
-template<class iitT, typename Item, typename Node>
+template<class iitT, typename Item, class Node, template<class> class NodeArray>
 class iit_builder_base {
-    std::vector<Node> nodes_;
+    NodeArray<Node> nodes_;
+    std::function<void(NodeArray<Node>&)> sort_;
 
 public:
-    iit_builder_base() = default;
+    iit_builder_base(void sort(NodeArray<Node>&) = iit_sort<NodeArray<Node>>)
+        : sort_(sort)
+        {}
+
     template<typename InputIterator>
-    iit_builder_base(InputIterator begin, InputIterator end) {
+    iit_builder_base(InputIterator begin, InputIterator end, void sort(NodeArray<Node>&) = iit_sort<NodeArray<Node>>) 
+        : sort_(sort) {
         add(begin, end);
     }
 
@@ -256,36 +316,42 @@ public:
 
     template<typename... Args>
     iitT build(Args&&... args) {
+        sort_(nodes_);
         return iitT(nodes_, std::forward<Args>(args)...);
     }
 };
 
 // Basic implicit interval tree (a reimplementation of cgranges)
-template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
-class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>> {
+// The optional fifth and sixth template parameters can substitute a different NodeArray
+// implementation.
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&), template<class> class NodeArray = std::vector>
+class iit : public iit_base<Pos, Item, iit_node_base<Pos, Item, get_beg, get_end>, NodeArray> {
     using Node = iit_node_base<Pos, Item, get_beg, get_end>;
 
-    iit(std::vector<Node>& nodes_)
-        : iit_base<Pos, Item, Node>(nodes_)
+    iit(NodeArray<Node>& nodes_)
+        : iit_base<Pos, Item, Node, NodeArray>(nodes_)
         {}
 
 public:
-    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node>;
-    friend builder;
+    using builder = iit_builder_base<iit<Pos, Item, get_beg, get_end>, Item, Node, NodeArray>;
+    friend builder;    
 };
 
 
 // iitii-specialized node type
 template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
 struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
-    // Additional augment values for iitii nodes, which help us know when we can stop climbing in
-    // the bottom-up search starting from a leaf to an ancestor node which must contain all query
-    // results beneath it.
-    //
+    // Additional augment value for iitii nodes, which helps us prove when we can stop climbing in
+    // the bottom-up search for a subtree root which must contain all query results beneath it.
+    Pos outside_max_end;
     // outside_max_end of node n is the maximum m.end() of all nodes m outside of n & its subtree
     //     with m.beg() < n.beg(); -infinity if there are no such nodes.
+    //
+    // Furthermore,
     // outside_min_beg of node n is the minimum m.beg() of all nodes m outside of n & its subtree
     //     with m.beg() >= n.beg(); infinity if there are no such nodes.
+    // But we don't need to store outside_min_beg, because we can compute it in constant time using
+    // rank offsets in the beg-sorted node array.
     //
     // Suppose during a query for [qbeg, qend) we climb up to a node n with,
     //   (i) n.outside_max_end <= qbeg; AND
@@ -293,22 +359,18 @@ struct iitii_node : public iit_node_base<Pos, Item, get_beg, get_end> {
     // By (i), any node outside n & subtree with beg < n's cannot overlap the query. By (ii), any
     // node outside n & subtree with beg >= n's cannot overlap the query. This exhausts all nodes
     // outside of n & subtree, so we need not climb past n.
-    Pos outside_max_end;
-    Pos outside_min_beg;
 
     iitii_node(const Item& item_)
         : iit_node_base<Pos, Item, get_beg, get_end>(item_)
         , outside_max_end(std::numeric_limits<Pos>::min())
-        , outside_min_beg(std::numeric_limits<Pos>::max())
         {}
 };
 
 // simple linear regression of y ~ x given points [(x,y)], returning (intercept, slope)
 template<typename XT, typename YT>
 std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
-    if (points.empty()) {
-        return std::make_pair(std::numeric_limits<double>::quiet_NaN(),
-                              std::numeric_limits<double>::quiet_NaN());
+    if (points.size() <= 1) {
+        return std::make_pair(0.0, 0.0);
     }
     double sum_x, sum_y, cov, var;
     sum_x = sum_y = cov = var = 0.0;
@@ -329,28 +391,26 @@ std::pair<double,double> regress(const std::vector<std::pair<XT,YT>>& points) {
     return std::make_pair(mean_y - m*mean_x, m);
 }
 
-template<typename XT, typename YT>
-double mean_absolute_residual(const std::vector<std::pair<XT,YT>>& points, double b, double m) {
-    if (points.empty()) {
-        return std::numeric_limits<double>::quiet_NaN();
-    }
-    double sr = 0.0;
-    for (const auto& pt : points) {
-        double y = double(pt.second), fx = (m*double(pt.first)+b);
-        sr += y >= fx ? y-fx : fx-y;
-    }
-    return sr/points.size();
+// floor(log2(x)) for positive x (quickly)
+inline unsigned log2ull(unsigned long long x) {
+    assert(x);
+    unsigned ans = unsigned(8*sizeof(unsigned long long) - __builtin_clzll(x) - 1);
+    assert(ans == unsigned(floor(log2(double(x)))));
+    return ans;
 }
 
 // here it is
-template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&)>
-class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>> {
+template<typename Pos, typename Item, Pos get_beg(const Item&), Pos get_end(const Item&), template<class> class NodeArray = std::vector>
+class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>, NodeArray> {
     using Node = iitii_node<Pos, Item, get_beg, get_end>;
-    using super = iit_base<Pos, Item, Node>;
+    using super = iit_base<Pos, Item, Node, NodeArray>;
     using typename super::Rank;
     using typename super::Level;
     using super::left;
     using super::right;
+    using super::leftmost_leaf;
+    using super::leftmost_leaf2;
+    using super::rightmost_leaf;
     using super::parent;
     using super::nodes;
     using super::full_size;
@@ -359,92 +419,154 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
     using super::root;
     using super::root_level;
 
+    inline Pos outside_min_beg(Rank subtree, Level k) const {
+        // constant-time computation of outside_min_beg: beg() of the node ranked one higher than
+        // subtree's rightmost child
+        const Rank r = rightmost_leaf(subtree, k);
+        __builtin_prefetch(&(nodes[r+1]));
+        const Pos beg = nodes[subtree].beg();
+        const Rank l = leftmost_leaf(subtree, k);
+        if (l && nodes[l-1].beg() == beg) {
+            // corner case: nodes to the left of the subtree can have the same beg as subroot
+            // and outside_min_beg is defined on nodes with beg >= subroot's.
+            return beg;
+        }
+        return r < nodes.size()-1 ? nodes[r+1].beg() : std::numeric_limits<Pos>::max();
+    }
 
-    // Leaf prediction model: the (max_beg-min_beg) range is partitioned into a number of domains,
-    // each domain covering an equal-sized portion of that range. For each domain d we keep a
-    // linear model of leaf rank on beg position, rank ~ w[d,0] + w[d,1]*beg.
-    // Given query qbeg, selecting the domain and predicting the rank should take constant time.
-    // As a detail, the leaves are the even-ranked nodes, so we have the models predict rank/2 and
-    // then double the floored prediction.
-    // TODO: think about predicting internal nodes instead of leaves
-    unsigned domains;
-    Pos domain_size = Node::npos;
-    std::vector<float> weights;  // domains*2
-    Pos min_beg = std::numeric_limits<Pos>::max();
+    // Additional tree navigation concept, LevelRank: the rank of a node **within its level**
+    // e.g. a level-k node with LevelRank=1 is the second-lowest (second-leftmost) node on level k
+    typedef std::size_t LevelRank;
 
-    inline unsigned which_domain(Pos beg) const {
+    inline Rank rank_of_levelrank(Level k, LevelRank ofs) const {
+        return (size_t(1)<<k)*(2*ofs+1)-1;
+    }
+
+    inline LevelRank levelrank_of_rank(Rank r) const {
+        return ((r+1)/(size_t(1)<<level(r))-1)/2;
+    }
+
+    // Rank prediction model: the [min_beg, max_beg] range is partitioned into a number C of
+    // domains, each covering an equal-sized portion of that range. The domain pertaining to a
+    // position beg is d(beg) = floor((beg-min_beg)*C/(max_beg-min_beg)), bounded to [0,C).
+    //
+    // For each domain d, we store three parameters: a Level l[d] ∈ [0,root_level] into which we
+    // will jump, and linear weights w[d,0] and w[d,1] for the regression of LevelRank on Pos,
+    //   lr(beg) ~ w[d(beg),0] + w[d(beg),1]*beg
+    //
+    // To start a query for qbeg, jump to the node: rank_of_levelrank(l[d(qbeg)], lr(qbeg))
+
+    typedef std::size_t Domain;
+    Domain domains;               // C
+    Pos min_beg = std::numeric_limits<Pos>::max(),
+        domain_size = Node::npos;;
+    std::vector<float> parameters;  // C rows of three parameters (row-major storage): w[0,d],
+                                    // w[1,d] and l[d]. NB: the third is a Level stored as a float.
+
+    inline Domain which_domain(Pos beg) const {
         if (beg < min_beg) {
             return 0;
         }
-        return std::min(domains-1, unsigned((beg-min_beg)/domain_size));
+        return std::min(domains-1, Domain((beg-min_beg)/domain_size));
     }
 
-    // Given qbeg, select domain and predict rank from the respective model
-    // TODO: try using middle of qbeg & qend, or generally "learn" the best offset
-    Rank predict_leaf(Pos qbeg) const {
-        auto which = which_domain(qbeg);
-        assert(which < domains);
+    inline Rank interpolate(Level k, float w0, float w1, Pos qbeg) const {
+        // given model parameters within a domain, return the node to start searching for qbeg
+        const float ofs_f = w0 + w1*float(qbeg);
+        assert(std::isfinite(ofs_f));
+        const Rank r = rank_of_levelrank(k, LevelRank(std::max(0.0f, roundf(ofs_f))));
+        assert(r >= nodes.size() || level(r) == k);
 
-        float halfrank = weights[2*which] + weights[2*which+1]*float(qbeg);
-        if (!std::isfinite(halfrank)) {
-            return nrank;
-        }
-
-        Rank r = 2*Rank(std::max(0.0f,halfrank));
+        // detail: if rank is imaginary (qbeg is off-scale high), start from rightmost real leaf
         const auto nsz = nodes.size();
         return r < nsz ? r : (nsz - (2 - nsz%2));
     }
 
     void train() {
-        std::vector<std::vector<std::pair<Pos,Rank>>> points;
-        points.resize(domains);
-        // partition all the nodes into their respective domains & record training points
-        for (Rank r = 0; r < nodes.size(); r+=2) {
-            points.at(which_domain(nodes[r].beg()))
-                    .push_back(std::make_pair(nodes[r].beg(), r/2));
+        // Fibonacci-ish series of tree levels at which to evaluate interpolation model fit
+        const std::vector<Level> TRAIN_LEVELS = {0, 1, 2, 4, 7, 12, 20, 33, 54};
+
+        // scan the nodes to extract <Pos,Rank> points partitioned by domain
+        std::vector<std::vector<std::pair<Pos,Rank>>> points(domains);
+        for (Rank r = 0; r < nodes.size(); ++r) {
+            points.at(which_domain(nodes[r].beg())).push_back(std::make_pair(nodes[r].beg(), r));
         }
         // train each domain-specific model
-        for (unsigned which = 0; which < domains; ++which) {
-            auto w = regress<Pos,Rank>(points[which]);
-            // Keep the model if the regression succeeded and the mean absolute residual from the
-            // training points is <= 2^(half of tree height). Otherwise we consider the bottom-up
-            // search counterproductive; leaving the respective weights at nan will cause overlap()
-            // to fall back to top-down search from the root.
-            if (std::isfinite(w.first) && std::isfinite(w.second) &&
-                mean_absolute_residual(points[which], w.first, w.second) <= double(1 << (root_level/2))) {
-                weights[2*which] = float(w.first);
-                weights[2*which+1] = float(w.second);
+        for (Domain domain = 0; domain < domains; ++domain) {
+            // partition the domain points by tree level, converting Ranks to LevelRanks
+            std::vector<std::vector<std::pair<Pos,LevelRank>>> points_by_level(root_level+1);
+            for (const auto& p : points[domain]) {
+                Level k = level(p.second);
+                points_by_level.at(k)
+                               .push_back(std::make_pair(p.first, levelrank_of_rank(p.second)));
             }
-            // std::cout << "which = " << which << " points = " << points[which].size()
-            //           << " b = " << w.first << " m = " << w.second << std::endl;
+            // for each level,
+            double lowest_cost = std::numeric_limits<double>::max();
+            for (const Level k : TRAIN_LEVELS) {
+                if (k >= root_level || points_by_level[k].size() <= 1) {
+                    break;
+                }
+                // regress points on this level
+                auto w = regress<Pos,LevelRank>(points_by_level[k]);
+                if (w.second) {
+                    // calculate estimate of search cost (average over all domain points)
+                    size_t cost = 0;
+                    for (const auto& p : points[domain]) {
+                        const Pos x = p.first;
+                        const Rank y = p.second;
+                        const Rank fx = interpolate(k, float(w.first), float(w.second), x);
+                        const size_t error = (fx>=y ? fx-y : y-fx)/(size_t(1)<<k);
+                        const size_t error_penalty = error ? 2*(1+log2ull(error)) : 0,
+                            overlap_penalty = nodes[fx].outside_max_end>x ? 1+(root_level-k)/2 : 0;
+                        cost += k + std::max(error_penalty, overlap_penalty);
+                    }
+                    double avg_cost = double(cost)/points[domain].size();
+                    // store parameters if cost estimate is lower than top-down search and lower
+                    // than previous levels
+                    if (avg_cost < root_level && avg_cost < lowest_cost) {
+                        lowest_cost = avg_cost;
+                        float *pp = &(parameters[3*domain]);
+                        pp[0] = float(w.first);
+                        pp[1] = float(w.second);
+                        pp[2] = float(k);
+                    }
+                }
+            }
+            points[domain].clear(); // free a little memory
+            /*
+            std::cout << "domain = " << domain << " level = " << Level(parameters[3*domain+2])
+                      << " E[cost] = " << lowest_cost << std::endl;
+            */
         }
     }
 
-    inline Rank leftmost_child(Rank subtree) const {
-        Level k = level(subtree);
-        auto ofs = (Rank(1)<<k) - 1;
-        assert(subtree >= ofs);
-        return subtree - ofs;
+    // Given qbeg, select domain and predict search start node
+    Rank predict(Pos qbeg) const {
+        auto which = which_domain(qbeg);
+        assert(which < domains);
+        const float *pp = &(parameters[3*which]);
+
+        const float lv_f = pp[2];
+        if (lv_f < 0) {
+            return nrank;
+        }
+        assert(lv_f >= 0 && lv_f <= root_level);
+        const Level k = Level(lv_f);
+
+        return interpolate(k, pp[0], pp[1], qbeg);
     }
 
-    inline Rank rightmost_child(Rank subtree) const {
-        Level k = level(subtree);
-        auto ofs = (Rank(1)<<k) - 1;
-        assert(subtree + ofs < full_size);
-        return subtree + ofs;
-    }
-
-    iitii(std::vector<Node>& nodes_, unsigned domains_)
+    iitii(NodeArray<Node>& nodes_, Domain domains_)
         : super(nodes_)
-        , domains(std::max(1U,domains_))
+        , domains(std::max(Domain(1),domains_))
         , domain_size(std::numeric_limits<Pos>::max())
     {
-        weights.resize(domains*2, std::numeric_limits<float>::quiet_NaN());
+        parameters.resize(domains*3, -1.0f);
 
         if (nodes.size()) {
             // equal size (in Pos units) of each domain
             min_beg = nodes[0].beg();
-            domain_size = 1 + (nodes.back().beg()-min_beg)/domains;
+            domain_size = 1 + (nodes[nodes.size()-1].beg()-min_beg)/domains;
 
             // compute running max_end along the sorted array, which we'll look up while computing
             // outside_max_end below
@@ -453,23 +575,12 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
                 running_max_end.push_back(std::max(running_max_end[n-1], nodes[n].end()));
             }
 
-            // Fill outside_min_beg and outside_max_end. Neatly, with the cgranges beg-sorted array
-            // and running_max_end, we can find each value independently in ~constant time.
-            // Precomputing them is still worthwhile for cache locality and dealing with corner
-            // cases arising from beg position collisions.
+            // fill outside_max_end
             for (Rank n = 0; n < nodes.size(); ++n) {
                 Node& node = nodes[n];
-                Rank l = leftmost_child(n), r = rightmost_child(n);
+                Rank l = leftmost_leaf2(n);
 
-                // outside_min_beg is beg() of the node ranked one higher than n's rightmost child
-                node.outside_min_beg = r < nodes.size()-1 ? nodes[r+1].beg() : Node::npos;
                 if (l>0) {
-                    if (nodes[l-1].beg() == node.beg()) {
-                        // corner case: nodes to the left of n's subtree can have the same beg as n
-                        // and outside_min_beg is defined on nodes with beg >= n's.
-                        node.outside_min_beg = node.beg();
-                    }
-
                     // outside_max_end is the running_max_end of the highest-ranked node ranked
                     // below n's leftmost child & has beg strictly below n's
                     Rank leq = l-1;
@@ -484,8 +595,6 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
                                                 ? running_max_end[leq]
                                                 : std::numeric_limits<Pos>::min();
                 }
-
-                assert(node.outside_min_beg >= node.beg());
             }
 
             // train the rank prediction models
@@ -495,37 +604,42 @@ class iitii : public iit_base<Pos, Item, iitii_node<Pos, Item, get_beg, get_end>
 
 public:
     // iitii::builder::build() takes a size_t argument giving the number of domains to model
-    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node>;
+    using builder = iit_builder_base<iitii<Pos, Item, get_beg, get_end>, Item, Node, NodeArray>;
     friend builder;
 
-    size_t overlap(Pos qbeg, Pos qend, std::vector<Item>& ans) const override {
+    size_t overlap(Pos qbeg, Pos qend, std::vector<const Item*>& ans) const override {
         // ask model which leaf we should begin our bottom-up climb at
-        Rank prediction = predict_leaf(qbeg);
+        Rank prediction = predict(qbeg);
         if (prediction == nrank) {
             // the model did not make a prediction for some reason, so just go to the root
             return super::overlap(qbeg, qend, ans);
         }
-        assert(level(prediction) == 0);
+        const Level k0 = level(prediction);
+        assert(k0 <= root_level);
+        __builtin_prefetch(&(nodes[parent(prediction, k0)]));
 
         // climb until our necessary & sufficient criteria are met, or the root
-        size_t climb_cost = 0;
         Rank subtree = prediction;
+        Level k = k0;
         while (subtree != root &&                           // stop at root
                 (subtree >= nodes.size() ||                 // continue climb through imaginary
                  qbeg < nodes[subtree].outside_max_end ||   // possible outside overlap from left
-                 nodes[subtree].outside_min_beg < qend)) {  // possible outside overlap from right
-            subtree = parent(subtree);
-            // TODO: scheme to skip through chains of imaginary nodes along the border
-            ++climb_cost;
+                 outside_min_beg(subtree, k) < qend)) {        // possible outside overlap from right
+            subtree = parent(subtree, k++);
+            assert(k == level(subtree));
+            __builtin_prefetch(&(nodes[parent(subtree, k)]));
         }
+        const auto climb_cost = k - k0;
 
         auto self = const_cast<iitii<Pos, Item, get_beg, get_end>*>(this);  // getting around const
         self->queries++;
         self->total_climb_cost += climb_cost;
 
-        // scan the subtree for query results 
+        // scan the subtree for query results.
+        // pessimistically, we triple the climbing cost when adding it to the top-down search cost,
+        // because the outside_min_beg() lookup may incur two additional cache misses.
         ans.clear();
-        return super::scan(subtree, qbeg, qend, ans) + climb_cost;
+        return super::scan(subtree, k, qbeg, qend, ans) + 3*climb_cost;
     }
 
     size_t queries = 0;
