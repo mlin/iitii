@@ -92,3 +92,7 @@ The order in which the binary tree fills up (left, parent, right) implies useful
 * The border of the real and imaginary nodes can be traced by starting from the rightmost real leaf and following parents up to the root. This path may include imaginary nodes, and fully connects the tree.
 
 cgranges uses the last fact to propagate the interval end bounds from the orphaned parts of the tree up to the root.
+
+### Alternative approaches
+
+[Brodal, Fagerberg & Jacob (2002)](https://www.cs.au.dk/~gerth/papers/soda02.pdf) give a different construction for implicit search trees which can avoid the imaginary nodes complication. Briefly, consider *N* as a sum of powers of two, *N* = 2<sup>*p*<sub>0</sub></sup> + 2<sup>*p*<sub>1</sub></sup> + 2<sup>*p*<sub>2</sub></sup> ... (where the *p*'s are the places of *N*'s binary ones). Then, consider item 0 in the array to be an index node for the implicit, full tree of items [1, 2<sup>*p*<sub>0</sub></sup>); item 2<sup>*p*<sub>0</sub></sup> indexes the full tree of items [2<sup>*p*<sub>0</sub></sup>+1, 2<sup>*p*<sub>0</sub></sup>+2<sup>*p*<sub>1</sub></sup>), and so on. Search proceeds by first finding the highest index node less than or equal to the query, then searching the adjacent full tree.
